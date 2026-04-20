@@ -1,3 +1,4 @@
 /config.json
 /proxy-penguin*
 frontend/node_modules/
+/nohup.out

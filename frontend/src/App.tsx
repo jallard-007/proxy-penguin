@@ -1,222 +1,44 @@
-import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import type { RequestRecord, SortState } from './types';
-import { fetchRequests, checkAuth, logout } from './api';
-import { useSSE } from './hooks/useSSE';
-import Toolbar, { type Filters, emptyFilters } from './components/Toolbar';
+import { useState, useMemo } from 'react';
+import type { Filters, SortState } from './types';
+import { emptyFilters } from './types';
+import { applyFilters, sortRecords } from './utils/filter';
+import { useAuth } from './hooks/useAuth';
+import { useRecords } from './hooks/useRecords';
+import Toolbar from './components/Toolbar';
 import RequestTable from './components/RequestTable';
 import LoginForm from './components/LoginForm';
 
-type AuthState = 'checking' | 'login' | 'authenticated' | 'noauth';
-
-function matchesStatusFilter(statusCode: number, pattern: string): boolean {
-  if (!pattern) return true;
-  const s = String(statusCode);
-  const p = pattern.trim().toLowerCase().replace(/x/g, '\\d');
-  try {
-    return new RegExp('^' + p).test(s);
-  } catch {
-    return s.startsWith(pattern);
-  }
-}
-
-function applyFilters(records: RequestRecord[], filters: Filters): RequestRecord[] {
-  const excludeSet = new Set(filters.excludedHostnames);
-  const dateFrom = filters.dateFrom ? new Date(filters.dateFrom).getTime() : 0;
-  const dateTo = filters.dateTo ? new Date(filters.dateTo).getTime() : 0;
-  const hostnameFilter = filters.hostname.toLowerCase();
-  const pathFilter = filters.path.toLowerCase();
-  const uaFilter = filters.userAgent.toLowerCase();
-
-  return records.filter((r) => {
-    if (excludeSet.size > 0 && excludeSet.has(r.hostname)) return false;
-    if (hostnameFilter && !r.hostname.toLowerCase().includes(hostnameFilter)) return false;
-    if (pathFilter && !r.path.toLowerCase().includes(pathFilter)) return false;
-    if (filters.clientIp && !r.clientIp.includes(filters.clientIp)) return false;
-    if (filters.status && !matchesStatusFilter(r.status, filters.status)) return false;
-    if (uaFilter && !r.userAgent.toLowerCase().includes(uaFilter)) return false;
-    if (dateFrom) {
-      const ts = new Date(r.timestamp).getTime();
-      if (ts < dateFrom) return false;
-    }
-    if (dateTo) {
-      const ts = new Date(r.timestamp).getTime();
-      if (ts > dateTo) return false;
-    }
-    return true;
-  });
-}
-
-function sortRecords(records: RequestRecord[], sort: SortState): RequestRecord[] {
-  return [...records].sort((a, b) => {
-    let va: number | string = a[sort.field] as number | string;
-    let vb: number | string = b[sort.field] as number | string;
-    if (sort.field === 'timestamp') {
-      va = new Date(va).getTime();
-      vb = new Date(vb).getTime();
-    }
-    if (va < vb) return sort.dir === 'asc' ? -1 : 1;
-    if (va > vb) return sort.dir === 'asc' ? 1 : -1;
-    return 0;
-  });
-}
-
 export default function App() {
-  const [authState, setAuthState] = useState<AuthState>('checking');
-  const [loginError, setLoginError] = useState('');
-  const [sseStatus, setSseStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const { authState, loginError, handleLoginSuccess, handleLogout, handleAuthExpired } = useAuth();
 
-  // All records: historical + live
-  const [historicalRecords, setHistoricalRecords] = useState<RequestRecord[]>([]);
-  const [liveRecords, setLiveRecords] = useState<RequestRecord[]>([]);
-  const [newIds, setNewIds] = useState<Set<number>>(new Set());
-  const newIdTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
-
-  const [hasMore, setHasMore] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [initialLoaded, setInitialLoaded] = useState(false);
-  const [minHistoricalId, setMinHistoricalId] = useState<number | undefined>(undefined);
-  const maxKnownId = useRef(0);
+  const sseEnabled = authState === 'authenticated' || authState === 'noauth';
+  const { allRecords, newIds, sseStatus, hasMore, loadingMore, handleLoadMore, reset } = useRecords({
+    enabled: sseEnabled,
+    onAuthExpired: handleAuthExpired,
+  });
 
   const [sort, setSort] = useState<SortState>({ field: 'timestamp', dir: 'desc' });
   const [filters, setFilters] = useState<Filters>(emptyFilters);
 
-  // Combine historical and live records, deduplicating by ID
-  const allRecords = useMemo(() => {
-    const map = new Map<number, RequestRecord>();
-    for (const r of historicalRecords) map.set(r.id, r);
-    for (const r of liveRecords) map.set(r.id, r);
-    return Array.from(map.values());
-  }, [historicalRecords, liveRecords]);
-
-  // Unique hostnames for exclusion filter
   const hostnames = useMemo(() => {
     const set = new Set<string>();
     for (const r of allRecords) set.add(r.hostname);
     return [...set].sort();
   }, [allRecords]);
 
-  // Filtered + sorted
   const filteredRecords = useMemo(
     () => sortRecords(applyFilters(allRecords, filters), sort),
     [allRecords, filters, sort],
   );
 
-  // Load a page of historical records
-  const loadPage = useCallback(async (beforeId?: number) => {
-    setLoadingMore(true);
-    try {
-      const resp = await fetchRequests(beforeId, 50);
-      const page = resp.records ?? [];
-      setHistoricalRecords((prev) => {
-        const existing = new Set(prev.map((r) => r.id));
-        const newRecs = page.filter((r) => !existing.has(r.id));
-        return [...prev, ...newRecs];
-      });
-      if (page.length > 0) {
-        let pageMin = page[0].id;
-        let pageMax = page[0].id;
-        for (let i = 1; i < page.length; i++) {
-          if (page[i].id < pageMin) pageMin = page[i].id;
-          if (page[i].id > pageMax) pageMax = page[i].id;
-        }
-        setMinHistoricalId((prev) => prev === undefined ? pageMin : Math.min(prev, pageMin));
-        if (pageMax > maxKnownId.current) maxKnownId.current = pageMax;
-      }
-      setHasMore(resp.hasMore);
-    } catch (err) {
-      console.error('Failed to load records:', err);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, []);
-
-  // Initial load
-  useEffect(() => {
-    if ((authState === 'authenticated' || authState === 'noauth') && !initialLoaded) {
-      setInitialLoaded(true);
-      loadPage();
-    }
-  }, [authState, initialLoaded, loadPage]);
-
-  const handleLoadMore = useCallback(() => {
-    if (minHistoricalId === undefined) return;
-    loadPage(minHistoricalId);
-  }, [minHistoricalId, loadPage]);
-
-  // SSE callbacks
-  const onRecord = useCallback((rec: RequestRecord) => {
-    if (rec.id > maxKnownId.current) maxKnownId.current = rec.id;
-    setLiveRecords((prev) => [...prev, rec]);
-    setNewIds((prev) => {
-      const next = new Set(prev);
-      next.add(rec.id);
-      return next;
-    });
-
-    // Clear new highlight after 3 seconds
-    const timer = setTimeout(() => {
-      setNewIds((prev) => {
-        const next = new Set(prev);
-        next.delete(rec.id);
-        return next;
-      });
-      newIdTimers.current.delete(rec.id);
-    }, 3000);
-    newIdTimers.current.set(rec.id, timer);
-  }, []);
-
-  const onRecordUpdate = useCallback((rec: RequestRecord) => {
-    setLiveRecords((prev) => prev.map((r) => (r.id === rec.id ? rec : r)));
-    setHistoricalRecords((prev) => prev.map((r) => (r.id === rec.id ? rec : r)));
-  }, []);
-
-  const onAuthExpired = useCallback(() => {
-    setAuthState('login');
-    setLoginError('Your session has expired. Please log in again.');
-  }, []);
-
-  const onStatusChange = useCallback((status: 'connecting' | 'connected' | 'disconnected') => {
-    setSseStatus(status);
-  }, []);
-
-  const getLastId = useCallback(() => maxKnownId.current, []);
-
-  const sseEnabled = authState === 'authenticated' || authState === 'noauth';
-  const closeSSE = useSSE({ onRecord, onRecordUpdate, onAuthExpired, onStatusChange, getLastId, enabled: sseEnabled });
-
-  // Check auth on mount
-  useEffect(() => {
-    checkAuth().then((result) => {
-      if (!result.authRequired) {
-        setAuthState('noauth');
-      } else if (!result.error) {
-        setAuthState('authenticated');
-      } else {
-        setAuthState('login');
-      }
-    }).catch(() => {
-      setAuthState('noauth');
-    });
-  }, []);
-
-  const handleLoginSuccess = () => {
-    setAuthState('authenticated');
-    setLoginError('');
-    setInitialLoaded(false);
-    setHistoricalRecords([]);
-    setLiveRecords([]);
+  const onLoginSuccess = () => {
+    reset();
+    handleLoginSuccess();
   };
 
-  const handleLogout = async () => {
-    closeSSE();
-    try { await logout(); } catch { /* ignore */ }
-    setAuthState('login');
-    setHistoricalRecords([]);
-    setLiveRecords([]);
-    setNewIds(new Set());
-    setSseStatus('disconnected');
-    setInitialLoaded(false);
-    setMinHistoricalId(undefined);
+  const onLogout = () => {
+    handleLogout();
+    reset();
   };
 
   if (authState === 'checking') {
@@ -228,7 +50,7 @@ export default function App() {
   }
 
   if (authState === 'login') {
-    return <LoginForm onSuccess={handleLoginSuccess} initialError={loginError} />;
+    return <LoginForm onSuccess={onLoginSuccess} initialError={loginError} />;
   }
 
   const statusDotClass =
@@ -249,7 +71,7 @@ export default function App() {
         <div className="flex items-center gap-4">
           {authState === 'authenticated' && (
             <button
-              onClick={handleLogout}
+              onClick={onLogout}
               className="text-xs px-3 py-1 rounded-md bg-border-subtle text-gray-100 cursor-pointer hover:bg-muted"
             >
               Logout

@@ -1,26 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
+import type { Filters } from '../types';
+import { emptyFilters } from '../types';
 
-export interface Filters {
-  hostname: string;
-  path: string;
-  clientIp: string;
-  status: string;
-  userAgent: string;
-  excludedHostnames: string[];
-  dateFrom: string;
-  dateTo: string;
-}
-
-export const emptyFilters: Filters = {
-  hostname: '',
-  path: '',
-  clientIp: '',
-  status: '',
-  userAgent: '',
-  excludedHostnames: [],
-  dateFrom: '',
-  dateTo: '',
-};
+const DATE_PRESETS = [
+  { label: '15m', minutes: 15 },
+  { label: '1h', minutes: 60 },
+  { label: '24h', minutes: 1440 },
+  { label: '7d', minutes: 10080 },
+];
 
 interface ToolbarProps {
   filters: Filters;
@@ -107,32 +94,23 @@ export default function Toolbar({ filters, onFiltersChange, totalCount, filtered
 
       {/* Date range with presets */}
       <div className="flex items-center gap-1 text-xs text-muted">
-        {[
-          { label: '15m', minutes: 15 },
-          { label: '1h', minutes: 60 },
-          { label: '24h', minutes: 1440 },
-          { label: '7d', minutes: 10080 },
-        ].map(({ label, minutes }) => {
-          const fromValue = new Date(Date.now() - minutes * 60000).toISOString().slice(0, 16);
-          const isActive = filters.dateFrom === fromValue && !filters.dateTo;
-          return (
-            <button
-              key={label}
-              onClick={() => update({ dateFrom: fromValue, dateTo: '' })}
-              className={`px-2 py-1 rounded-md border cursor-pointer ${
-                isActive
-                  ? 'bg-accent/15 border-accent/40 text-accent'
-                  : 'bg-gray-950 border-border-subtle hover:text-gray-100'
-              }`}
-            >
-              {label}
-            </button>
-          );
-        })}
+        {DATE_PRESETS.map(({ label }) => (
+          <button
+            key={label}
+            onClick={() => update({ datePreset: label, dateFrom: '', dateTo: '' })}
+            className={`px-2 py-1 rounded-md border cursor-pointer ${
+              filters.datePreset === label
+                ? 'bg-accent/15 border-accent/40 text-accent'
+                : 'bg-gray-950 border-border-subtle hover:text-gray-100'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
         <input
           type="datetime-local"
           value={filters.dateFrom}
-          onChange={(e) => update({ dateFrom: e.target.value })}
+          onChange={(e) => update({ dateFrom: e.target.value, datePreset: '' })}
           title="From date"
           className="bg-gray-950 border border-border-subtle text-gray-100 px-2 py-1 rounded-md text-xs outline-none focus:border-accent w-[10rem]"
         />
@@ -140,7 +118,7 @@ export default function Toolbar({ filters, onFiltersChange, totalCount, filtered
         <input
           type="datetime-local"
           value={filters.dateTo}
-          onChange={(e) => update({ dateTo: e.target.value })}
+          onChange={(e) => update({ dateTo: e.target.value, datePreset: '' })}
           title="To date"
           className="bg-gray-950 border border-border-subtle text-gray-100 px-2 py-1 rounded-md text-xs outline-none focus:border-accent w-[10rem]"
         />

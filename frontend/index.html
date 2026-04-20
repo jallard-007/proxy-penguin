@@ -109,6 +109,48 @@
             color: var(--text-muted);
         }
 
+        /* Column visibility dropdown */
+        .dropdown-wrap {
+            position: relative;
+            display: inline-block;
+        }
+
+        .dropdown-menu {
+            display: none;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 0;
+            z-index: 100;
+            min-width: 160px;
+            margin-top: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        }
+
+        .dropdown-menu.open { display: block; }
+
+        .dropdown-menu label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 14px;
+            font-size: 13px;
+            cursor: pointer;
+            color: var(--text);
+            white-space: nowrap;
+        }
+
+        .dropdown-menu label:hover {
+            background: var(--bg);
+        }
+
+        .dropdown-menu input[type="checkbox"] {
+            accent-color: var(--accent);
+        }
+
         .table-wrap {
             flex: 1;
             overflow-y: auto;
@@ -116,9 +158,10 @@
         }
 
         table {
-            width: 100%;
             border-collapse: collapse;
             font-size: 13px;
+            table-layout: fixed;
+            width: 1px;
         }
 
         thead {
@@ -137,15 +180,38 @@
             cursor: pointer;
             user-select: none;
             white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            position: relative;
+            min-width: 0;
         }
 
         th:hover { color: var(--text); }
         th.sorted { color: var(--accent); }
 
+        /* Column resize handle */
+        .col-resize {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 5px;
+            cursor: col-resize;
+            z-index: 2;
+        }
+
+        .col-resize:hover,
+        .col-resize.active {
+            background: var(--accent);
+        }
+
         td {
             padding: 6px 12px;
             border-bottom: 1px solid var(--border);
             white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
             font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
             font-size: 12px;
         }
@@ -271,7 +337,8 @@
         <input id="f-hostname" placeholder="Hostname..." title="Filter by hostname">
         <input id="f-path" placeholder="Path..." title="Filter by path">
         <input id="f-ip" placeholder="Client IP..." title="Filter by client IP">
-        <input id="f-status" placeholder="Status..." title="Filter by status code">
+        <input id="f-status" placeholder="Status (e.g. 2xx)..." title="Filter by status code. Use x as wildcard.">
+        <input id="f-ua" placeholder="User-Agent..." title="Filter by User-Agent">
         <button id="btn-clear">Clear</button>
         <div class="spacer"></div>
         <label style="font-size:13px;color:var(--text-muted);">Group:
@@ -282,19 +349,24 @@
                 <option value="clientIp">Client IP</option>
             </select>
         </label>
+        <div class="dropdown-wrap">
+            <button id="btn-columns">Columns &#9662;</button>
+            <div class="dropdown-menu" id="col-menu"></div>
+        </div>
         <span class="count" id="count"></span>
     </div>
 
     <div class="table-wrap">
-        <table>
+        <table id="main-table">
             <thead>
-                <tr>
-                    <th data-field="timestamp">Time</th>
-                    <th data-field="hostname">Hostname</th>
-                    <th data-field="path">Path</th>
-                    <th data-field="clientIp">Client IP</th>
-                    <th data-field="status">Status</th>
-                    <th data-field="durationMs">Duration</th>
+                <tr id="header-row">
+                    <th data-field="timestamp" style="width:180px">Time<span class="col-resize"></span></th>
+                    <th data-field="hostname" style="width:160px">Hostname<span class="col-resize"></span></th>
+                    <th data-field="path" style="width:240px">Path<span class="col-resize"></span></th>
+                    <th data-field="clientIp" style="width:130px">Client IP<span class="col-resize"></span></th>
+                    <th data-field="status" style="width:80px">Status<span class="col-resize"></span></th>
+                    <th data-field="durationMs" style="width:100px">Duration<span class="col-resize"></span></th>
+                    <th data-field="userAgent" style="width:200px">User-Agent<span class="col-resize"></span></th>
                 </tr>
             </thead>
             <tbody id="tbody"></tbody>
@@ -307,21 +379,117 @@
         let records = [];
         let sort = { field: 'timestamp', dir: 'desc' };
         let groupBy = '';
-        let filters = { hostname: '', path: '', clientIp: '', status: '' };
+        let filters = { hostname: '', path: '', clientIp: '', status: '', userAgent: '' };
         let newIds = new Set();
+
+        const COLUMNS = [
+            { field: 'timestamp', label: 'Time' },
+            { field: 'hostname', label: 'Hostname' },
+            { field: 'path', label: 'Path' },
+            { field: 'clientIp', label: 'Client IP' },
+            { field: 'status', label: 'Status' },
+            { field: 'durationMs', label: 'Duration' },
+            { field: 'userAgent', label: 'User-Agent' },
+        ];
+        const COL_MIN_WIDTH = 30;
+        let hiddenCols = new Set();
 
         const tbody = document.getElementById('tbody');
         const countEl = document.getElementById('count');
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
+        const headerRow = document.getElementById('header-row');
+        const mainTable = document.getElementById('main-table');
 
         // Filters
         const fHostname = document.getElementById('f-hostname');
         const fPath = document.getElementById('f-path');
         const fIp = document.getElementById('f-ip');
         const fStatus = document.getElementById('f-status');
+        const fUa = document.getElementById('f-ua');
         const groupSelect = document.getElementById('group-by');
         const btnClear = document.getElementById('btn-clear');
+
+        // Column visibility dropdown
+        const btnColumns = document.getElementById('btn-columns');
+        const colMenu = document.getElementById('col-menu');
+
+        function buildColMenu() {
+            colMenu.innerHTML = '';
+            COLUMNS.forEach(c => {
+                const lbl = document.createElement('label');
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.checked = !hiddenCols.has(c.field);
+                cb.addEventListener('change', () => {
+                    if (cb.checked) {
+                        hiddenCols.delete(c.field);
+                    } else {
+                        hiddenCols.add(c.field);
+                    }
+                    applyColumnVisibility();
+                    render();
+                });
+                lbl.appendChild(cb);
+                lbl.appendChild(document.createTextNode(c.label));
+                colMenu.appendChild(lbl);
+            });
+        }
+
+        btnColumns.addEventListener('click', (e) => {
+            e.stopPropagation();
+            colMenu.classList.toggle('open');
+        });
+
+        document.addEventListener('click', () => {
+            colMenu.classList.remove('open');
+        });
+
+        colMenu.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+
+        function applyColumnVisibility() {
+            const ths = headerRow.querySelectorAll('th[data-field]');
+            ths.forEach(th => {
+                th.style.display = hiddenCols.has(th.dataset.field) ? 'none' : '';
+            });
+        }
+
+        buildColMenu();
+        applyColumnVisibility();
+
+        // Column resizing
+        let resizing = null;
+        headerRow.querySelectorAll('.col-resize').forEach(handle => {
+            handle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const th = handle.parentElement;
+                resizing = {
+                    th: th,
+                    startX: e.clientX,
+                    startWidth: th.offsetWidth,
+                };
+                handle.classList.add('active');
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+            });
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!resizing) return;
+            const newWidth = Math.max(COL_MIN_WIDTH, resizing.startWidth + (e.clientX - resizing.startX));
+            resizing.th.style.width = newWidth + 'px';
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (!resizing) return;
+            resizing.th.querySelector('.col-resize').classList.remove('active');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            resizing = null;
+        });
 
         let debounceTimer;
         function onFilterChange() {
@@ -330,7 +498,8 @@
                 filters.hostname = fHostname.value.toLowerCase();
                 filters.path = fPath.value.toLowerCase();
                 filters.clientIp = fIp.value;
-                filters.status = fStatus.value;
+                filters.status = fStatus.value.trim().toLowerCase();
+                filters.userAgent = fUa.value.toLowerCase();
                 render();
             }, 150);
         }
@@ -339,6 +508,7 @@
         fPath.addEventListener('input', onFilterChange);
         fIp.addEventListener('input', onFilterChange);
         fStatus.addEventListener('input', onFilterChange);
+        fUa.addEventListener('input', onFilterChange);
 
         groupSelect.addEventListener('change', () => {
             groupBy = groupSelect.value;
@@ -350,13 +520,15 @@
             fPath.value = '';
             fIp.value = '';
             fStatus.value = '';
-            filters = { hostname: '', path: '', clientIp: '', status: '' };
+            fUa.value = '';
+            filters = { hostname: '', path: '', clientIp: '', status: '', userAgent: '' };
             render();
         });
 
         // Sorting
         document.querySelectorAll('th[data-field]').forEach(th => {
-            th.addEventListener('click', () => {
+            th.addEventListener('click', (e) => {
+                if (e.target.classList.contains('col-resize')) return;
                 const field = th.dataset.field;
                 if (sort.field === field) {
                     sort.dir = sort.dir === 'desc' ? 'asc' : 'desc';
@@ -374,13 +546,45 @@
             return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
+        const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
         function formatTime(ts) {
             const d = new Date(ts);
-            const h = String(d.getHours()).padStart(2, '0');
-            const m = String(d.getMinutes()).padStart(2, '0');
-            const s = String(d.getSeconds()).padStart(2, '0');
-            const ms = String(d.getMilliseconds()).padStart(3, '0');
-            return `${h}:${m}:${s}.${ms}`;
+            // Convert to EST (America/New_York)
+            const est = new Date(d.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+            const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+
+            // Time portion in AM/PM
+            let hours = est.getHours();
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            hours = hours % 12;
+            if (hours === 0) hours = 12;
+            const m = String(est.getMinutes()).padStart(2, '0');
+            const s = String(est.getSeconds()).padStart(2, '0');
+            const ms = String(est.getMilliseconds()).padStart(3, '0');
+            const timePart = `${hours}:${m}:${s}.${ms} ${ampm}`;
+
+            // Date portion
+            const diffMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()) -
+                           new Date(est.getFullYear(), est.getMonth(), est.getDate());
+            const diffDays = Math.round(diffMs / 86400000);
+
+            let datePart;
+            if (diffDays >= 0 && diffDays <= 6) {
+                // Within 6 days: use day name
+                datePart = DAY_NAMES[est.getDay()];
+            } else {
+                // Older: use month and day
+                datePart = MONTH_NAMES[est.getMonth()] + ' ' + est.getDate();
+            }
+
+            // Add year if not current year
+            if (est.getFullYear() !== now.getFullYear()) {
+                datePart = est.getFullYear() + ' ' + datePart;
+            }
+
+            return datePart + ' ' + timePart;
         }
 
         function formatDuration(ms) {
@@ -396,11 +600,27 @@
             return 'status-5xx';
         }
 
+        function matchesStatusFilter(statusCode, pattern) {
+            if (!pattern) return true;
+            const s = String(statusCode);
+            // Pad pattern comparison: if user types "2" treat as "2xx"
+            // Build a regex from pattern where x is wildcard digit
+            const p = pattern.replace(/x/g, '\\d');
+            // If the pattern is shorter than 3, anchor to start
+            try {
+                const re = new RegExp('^' + p);
+                return re.test(s);
+            } catch {
+                return s.startsWith(pattern);
+            }
+        }
+
         function matchesFilter(r) {
             if (filters.hostname && !r.hostname.toLowerCase().includes(filters.hostname)) return false;
             if (filters.path && !r.path.toLowerCase().includes(filters.path)) return false;
             if (filters.clientIp && !r.clientIp.includes(filters.clientIp)) return false;
-            if (filters.status && String(r.status) !== filters.status) return false;
+            if (filters.status && !matchesStatusFilter(r.status, filters.status)) return false;
+            if (filters.userAgent && !r.userAgent.toLowerCase().includes(filters.userAgent)) return false;
             return true;
         }
 
@@ -416,21 +636,28 @@
             return 0;
         }
 
+        function visibleColCount() {
+            return COLUMNS.length - hiddenCols.size;
+        }
+
         function renderRow(r) {
             const cls = newIds.has(r.id) ? ' class="new-row"' : '';
-            return `<tr${cls}>
-                <td>${formatTime(r.timestamp)}</td>
-                <td>${esc(r.hostname)}</td>
-                <td>${esc(r.path)}</td>
-                <td>${esc(r.clientIp)}</td>
-                <td><span class="badge ${statusClass(r.status)}">${r.status}</span></td>
-                <td>${formatDuration(r.durationMs)}</td>
-            </tr>`;
+            let html = `<tr${cls}>`;
+            if (!hiddenCols.has('timestamp')) html += `<td>${formatTime(r.timestamp)}</td>`;
+            if (!hiddenCols.has('hostname')) html += `<td>${esc(r.hostname)}</td>`;
+            if (!hiddenCols.has('path')) html += `<td>${esc(r.path)}</td>`;
+            if (!hiddenCols.has('clientIp')) html += `<td>${esc(r.clientIp)}</td>`;
+            if (!hiddenCols.has('status')) html += `<td><span class="badge ${statusClass(r.status)}">${r.status}</span></td>`;
+            if (!hiddenCols.has('durationMs')) html += `<td>${formatDuration(r.durationMs)}</td>`;
+            if (!hiddenCols.has('userAgent')) html += `<td>${esc(r.userAgent)}</td>`;
+            html += `</tr>`;
+            return html;
         }
 
         function render() {
             const filtered = records.filter(matchesFilter);
             filtered.sort(cmp);
+            const colspan = visibleColCount();
 
             let html;
             if (groupBy) {
@@ -442,7 +669,7 @@
                 html = '';
                 const sortedKeys = Object.keys(groups).sort();
                 for (const key of sortedKeys) {
-                    html += `<tr class="group-header"><td colspan="6">${esc(key)} &mdash; ${groups[key].length} requests</td></tr>`;
+                    html += `<tr class="group-header"><td colspan="${colspan}">${esc(key)} &mdash; ${groups[key].length} requests</td></tr>`;
                     for (const r of groups[key]) {
                         html += renderRow(r);
                     }

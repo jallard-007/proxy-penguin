@@ -1,0 +1,14 @@
+# binaries and db files
+/proxy-penguin*
+/proxy-loadgen
+/pp-data
+
+# sensitive config file
+/config.*
+
+# npm modules
+/frontend/node_modules/
+/frontend/dist/
+
+# background process output
+/nohup.out

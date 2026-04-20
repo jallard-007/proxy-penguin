@@ -206,7 +206,7 @@ func (s *Storage) QueryPage(beforeID int64, limit int) ([]*model.RequestRecord, 
 	}
 	defer rows.Close()
 
-	records := make([]*model.RequestRecord, 0, limit)
+	records := make([]*model.RequestRecord, 0, min(limit, maxPageSize))
 	for rows.Next() {
 		var r model.RequestRecord
 		var ts int64

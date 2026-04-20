@@ -22,11 +22,11 @@ func Wrap(records chan<- *model.RequestRecord, handler http.Handler) http.Handle
 		start := time.Now()
 		sr := &statusRecorder{recorder: rec, status: http.StatusOK}
 		handler.ServeHTTP(sr, r)
-		emit(records, start, r.Host, r.URL.Path, clientIP(r), sr.status)
+		emit(records, start, r.Host, r.URL.Path, clientIP(r), r.UserAgent(), sr.status)
 	})
 }
 
-func emit(records chan<- *model.RequestRecord, start time.Time, host, path, ip string, status int) {
+func emit(records chan<- *model.RequestRecord, start time.Time, host, path, ip, userAgent string, status int) {
 	rec := &model.RequestRecord{
 		Timestamp:  start,
 		Hostname:   host,
@@ -34,6 +34,7 @@ func emit(records chan<- *model.RequestRecord, start time.Time, host, path, ip s
 		ClientIP:   ip,
 		Status:     status,
 		DurationMs: float64(time.Since(start).Microseconds()) / 1000.0,
+		UserAgent:  userAgent,
 	}
 	select {
 	case records <- rec:

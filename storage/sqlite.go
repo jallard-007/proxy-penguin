@@ -75,8 +75,8 @@ func (s *Storage) Close() error {
 // Insert persists rec to the database and sets rec.ID to the newly assigned row ID.
 func (s *Storage) Insert(rec *model.RequestRecord) error {
 	res, err := s.db.Exec(
-		"INSERT INTO requests (timestamp, hostname, path, client_ip, status, duration_ms) VALUES (?, ?, ?, ?, ?, ?)",
-		rec.Timestamp.UnixMilli(), rec.Hostname, rec.Path, rec.ClientIP, rec.Status, rec.DurationMs,
+		"INSERT INTO requests (timestamp, hostname, path, client_ip, status, duration_ms, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		rec.Timestamp.UnixMilli(), rec.Hostname, rec.Path, rec.ClientIP, rec.Status, rec.DurationMs, rec.UserAgent,
 	)
 	if err != nil {
 		return err
@@ -143,7 +143,7 @@ func (s *Storage) CleanupExpiredSessions() {
 // Recent returns up to limit request records ordered chronologically (oldest first).
 func (s *Storage) Recent(limit int) ([]*model.RequestRecord, error) {
 	rows, err := s.db.Query(
-		"SELECT id, timestamp, hostname, path, client_ip, status, duration_ms FROM requests ORDER BY id DESC LIMIT ?",
+		"SELECT id, timestamp, hostname, path, client_ip, status, duration_ms, user_agent FROM requests ORDER BY id DESC LIMIT ?",
 		limit,
 	)
 	if err != nil {
@@ -155,7 +155,7 @@ func (s *Storage) Recent(limit int) ([]*model.RequestRecord, error) {
 	for rows.Next() {
 		var r model.RequestRecord
 		var ts int64
-		if err := rows.Scan(&r.ID, &ts, &r.Hostname, &r.Path, &r.ClientIP, &r.Status, &r.DurationMs); err != nil {
+		if err := rows.Scan(&r.ID, &ts, &r.Hostname, &r.Path, &r.ClientIP, &r.Status, &r.DurationMs, &r.UserAgent); err != nil {
 			return nil, err
 		}
 		r.Timestamp = time.UnixMilli(ts)

@@ -12,4 +12,5 @@ type RequestRecord struct {
 	ClientIP   string    `json:"clientIp"`
 	Status     int       `json:"status"`
 	DurationMs float64   `json:"durationMs"`
+	UserAgent  string    `json:"userAgent"`
 }

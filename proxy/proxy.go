@@ -12,8 +12,10 @@ import (
 )
 
 // Wrap returns an http.Handler that records each request handled by handler
-// by sending a RequestRecord to records.
-func Wrap(records chan<- *model.RequestRecord, handler http.Handler) http.Handler {
+// by sending a RecordEvent to events. A pending event is emitted immediately
+// when the request arrives, and a completion event is emitted after the
+// response finishes.
+func Wrap(events chan<- *model.RecordEvent, handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec, ok := w.(recorder)
 		if !ok {
@@ -21,25 +23,48 @@ func Wrap(records chan<- *model.RequestRecord, handler http.Handler) http.Handle
 		}
 		start := time.Now()
 		sr := &statusRecorder{recorder: rec, status: http.StatusOK}
-		handler.ServeHTTP(sr, r)
-		emit(records, start, r.Host, r.URL.Path, clientIP(r), r.UserAgent(), sr.status)
-	})
-}
 
-func emit(records chan<- *model.RequestRecord, start time.Time, host, path, ip, userAgent string, status int) {
-	rec := &model.RequestRecord{
-		Timestamp:  start,
-		Hostname:   host,
-		Path:       path,
-		ClientIP:   ip,
-		Status:     status,
-		DurationMs: float64(time.Since(start).Microseconds()) / 1000.0,
-		UserAgent:  userAgent,
-	}
-	select {
-	case records <- rec:
-	default:
-	}
+		// Emit pending record and wait for its ID to be assigned.
+		pendingRec := &model.RequestRecord{
+			Timestamp:   start,
+			Hostname:    r.Host,
+			Path:        r.URL.Path,
+			QueryParams: r.URL.RawQuery,
+			ClientIP:    clientIP(r),
+			UserAgent:   r.UserAgent(),
+			Pending:     true,
+		}
+		idReady := make(chan struct{})
+		select {
+		case events <- &model.RecordEvent{Record: pendingRec, IDReady: idReady}:
+		default:
+			idReady = nil // dropped; skip completion update
+		}
+
+		handler.ServeHTTP(sr, r)
+
+		if idReady == nil {
+			return
+		}
+		<-idReady
+
+		// Emit completion event.
+		completedRec := &model.RequestRecord{
+			ID:          pendingRec.ID,
+			Timestamp:   start,
+			Hostname:    r.Host,
+			Path:        r.URL.Path,
+			QueryParams: r.URL.RawQuery,
+			ClientIP:    clientIP(r),
+			UserAgent:   r.UserAgent(),
+			Status:      sr.status,
+			DurationMs:  float64(time.Since(start).Microseconds()) / 1000.0,
+		}
+		select {
+		case events <- &model.RecordEvent{Record: completedRec}:
+		default:
+		}
+	})
 }
 
 func clientIP(r *http.Request) string {

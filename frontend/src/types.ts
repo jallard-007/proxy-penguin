@@ -3,10 +3,12 @@ export interface RequestRecord {
   timestamp: string;
   hostname: string;
   path: string;
+  queryParams: string;
   clientIp: string;
   status: number;
   durationMs: number;
   userAgent: string;
+  pending: boolean;
 }
 
 export interface PageResponse {

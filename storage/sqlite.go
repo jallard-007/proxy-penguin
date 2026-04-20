@@ -28,10 +28,12 @@ func New(dbPath string) (*Storage, error) {
 			timestamp INTEGER NOT NULL,
 			hostname TEXT NOT NULL,
 			path TEXT NOT NULL,
+			query_params TEXT NOT NULL DEFAULT '',
 			client_ip TEXT NOT NULL,
 			status INTEGER NOT NULL,
 			duration_ms REAL NOT NULL,
-			user_agent TEXT NOT NULL DEFAULT ''
+			user_agent TEXT NOT NULL DEFAULT '',
+			pending INTEGER NOT NULL DEFAULT 0
 		)
 	`); err != nil {
 		db.Close()
@@ -76,8 +78,8 @@ func (s *Storage) Close() error {
 // Insert persists rec to the database and sets rec.ID to the newly assigned row ID.
 func (s *Storage) Insert(rec *model.RequestRecord) error {
 	res, err := s.db.Exec(
-		"INSERT INTO requests (timestamp, hostname, path, client_ip, status, duration_ms, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		rec.Timestamp.UnixMilli(), rec.Hostname, rec.Path, rec.ClientIP, rec.Status, rec.DurationMs, rec.UserAgent,
+		"INSERT INTO requests (timestamp, hostname, path, query_params, client_ip, status, duration_ms, user_agent, pending) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		rec.Timestamp.UnixMilli(), rec.Hostname, rec.Path, rec.QueryParams, rec.ClientIP, rec.Status, rec.DurationMs, rec.UserAgent, rec.Pending,
 	)
 	if err != nil {
 		return err
@@ -88,6 +90,15 @@ func (s *Storage) Insert(rec *model.RequestRecord) error {
 	}
 	rec.ID = id
 	return nil
+}
+
+// Update updates the mutable fields of an existing request record.
+func (s *Storage) Update(rec *model.RequestRecord) error {
+	_, err := s.db.Exec(
+		"UPDATE requests SET status = ?, duration_ms = ?, pending = ? WHERE id = ?",
+		rec.Status, rec.DurationMs, rec.Pending, rec.ID,
+	)
+	return err
 }
 
 // SessionRecord represents a session loaded from the database.
@@ -144,7 +155,7 @@ func (s *Storage) CleanupExpiredSessions() {
 // Recent returns up to limit request records ordered chronologically (oldest first).
 func (s *Storage) Recent(limit int) ([]*model.RequestRecord, error) {
 	rows, err := s.db.Query(
-		"SELECT id, timestamp, hostname, path, client_ip, status, duration_ms, user_agent FROM requests ORDER BY id DESC LIMIT ?",
+		"SELECT id, timestamp, hostname, path, query_params, client_ip, status, duration_ms, user_agent, pending FROM requests ORDER BY id DESC LIMIT ?",
 		limit,
 	)
 	if err != nil {
@@ -156,7 +167,7 @@ func (s *Storage) Recent(limit int) ([]*model.RequestRecord, error) {
 	for rows.Next() {
 		var r model.RequestRecord
 		var ts int64
-		if err := rows.Scan(&r.ID, &ts, &r.Hostname, &r.Path, &r.ClientIP, &r.Status, &r.DurationMs, &r.UserAgent); err != nil {
+		if err := rows.Scan(&r.ID, &ts, &r.Hostname, &r.Path, &r.QueryParams, &r.ClientIP, &r.Status, &r.DurationMs, &r.UserAgent, &r.Pending); err != nil {
 			return nil, err
 		}
 		r.Timestamp = time.UnixMilli(ts)
@@ -192,12 +203,12 @@ func (s *Storage) QueryPage(beforeID int64, limit int) ([]*model.RequestRecord, 
 	var err error
 	if beforeID > 0 {
 		rows, err = s.db.Query(
-			"SELECT id, timestamp, hostname, path, client_ip, status, duration_ms, user_agent FROM requests WHERE id < ? ORDER BY id DESC LIMIT ?",
+			"SELECT id, timestamp, hostname, path, query_params, client_ip, status, duration_ms, user_agent, pending FROM requests WHERE id < ? ORDER BY id DESC LIMIT ?",
 			beforeID, fetchLimit,
 		)
 	} else {
 		rows, err = s.db.Query(
-			"SELECT id, timestamp, hostname, path, client_ip, status, duration_ms, user_agent FROM requests ORDER BY id DESC LIMIT ?",
+			"SELECT id, timestamp, hostname, path, query_params, client_ip, status, duration_ms, user_agent, pending FROM requests ORDER BY id DESC LIMIT ?",
 			fetchLimit,
 		)
 	}
@@ -210,7 +221,7 @@ func (s *Storage) QueryPage(beforeID int64, limit int) ([]*model.RequestRecord, 
 	for rows.Next() {
 		var r model.RequestRecord
 		var ts int64
-		if err := rows.Scan(&r.ID, &ts, &r.Hostname, &r.Path, &r.ClientIP, &r.Status, &r.DurationMs, &r.UserAgent); err != nil {
+		if err := rows.Scan(&r.ID, &ts, &r.Hostname, &r.Path, &r.QueryParams, &r.ClientIP, &r.Status, &r.DurationMs, &r.UserAgent, &r.Pending); err != nil {
 			return nil, false, err
 		}
 		r.Timestamp = time.UnixMilli(ts)
@@ -226,4 +237,28 @@ func (s *Storage) QueryPage(beforeID int64, limit int) ([]*model.RequestRecord, 
 	}
 
 	return records, hasMore, nil
+}
+
+// QuerySince returns all records with ID > afterID, ordered by ID ascending.
+func (s *Storage) QuerySince(afterID int64) ([]*model.RequestRecord, error) {
+	rows, err := s.db.Query(
+		"SELECT id, timestamp, hostname, path, query_params, client_ip, status, duration_ms, user_agent, pending FROM requests WHERE id > ? ORDER BY id ASC",
+		afterID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []*model.RequestRecord
+	for rows.Next() {
+		var r model.RequestRecord
+		var ts int64
+		if err := rows.Scan(&r.ID, &ts, &r.Hostname, &r.Path, &r.QueryParams, &r.ClientIP, &r.Status, &r.DurationMs, &r.UserAgent, &r.Pending); err != nil {
+			return nil, err
+		}
+		r.Timestamp = time.UnixMilli(ts)
+		records = append(records, &r)
+	}
+	return records, rows.Err()
 }

@@ -67,7 +67,7 @@ func main() {
 
 	authMgr := auth.NewManager(cfg.ApiPassword, store)
 
-	records := make(chan *model.RequestRecord, 1024)
+	records := make(chan *model.RecordEvent, 1024)
 
 	apiSrv := api.NewServer(store, b, authMgr)
 
@@ -99,14 +99,30 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	// Record processor: store + publish each completed request.
+	// Record processor: store + publish each request event.
 	wg.Go(func() {
-		for rec := range records {
-			if err := store.Insert(rec); err != nil {
-				log.Printf("storage insert: %v", err)
-				continue
+		for evt := range records {
+			rec := evt.Record
+			if rec.ID > 0 {
+				// Completion update for an existing record.
+				if err := store.Update(rec); err != nil {
+					log.Printf("storage update: %v", err)
+					continue
+				}
+			} else {
+				// New (pending) record.
+				if err := store.Insert(rec); err != nil {
+					log.Printf("storage insert: %v", err)
+					if evt.IDReady != nil {
+						close(evt.IDReady)
+					}
+					continue
+				}
+				if evt.IDReady != nil {
+					close(evt.IDReady)
+				}
 			}
-			b.Publish(rec)
+			b.Publish(evt)
 		}
 	})
 

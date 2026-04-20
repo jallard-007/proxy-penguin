@@ -74,6 +74,8 @@ export default function App() {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [initialLoaded, setInitialLoaded] = useState(false);
+  const [minHistoricalId, setMinHistoricalId] = useState<number | undefined>(undefined);
+  const maxKnownId = useRef(0);
 
   const [sort, setSort] = useState<SortState>({ field: 'timestamp', dir: 'desc' });
   const [filters, setFilters] = useState<Filters>(emptyFilters);
@@ -110,6 +112,16 @@ export default function App() {
         const newRecs = page.filter((r) => !existing.has(r.id));
         return [...prev, ...newRecs];
       });
+      if (page.length > 0) {
+        let pageMin = page[0].id;
+        let pageMax = page[0].id;
+        for (let i = 1; i < page.length; i++) {
+          if (page[i].id < pageMin) pageMin = page[i].id;
+          if (page[i].id > pageMax) pageMax = page[i].id;
+        }
+        setMinHistoricalId((prev) => prev === undefined ? pageMin : Math.min(prev, pageMin));
+        if (pageMax > maxKnownId.current) maxKnownId.current = pageMax;
+      }
       setHasMore(resp.hasMore);
     } catch (err) {
       console.error('Failed to load records:', err);
@@ -127,14 +139,13 @@ export default function App() {
   }, [authState, initialLoaded, loadPage]);
 
   const handleLoadMore = useCallback(() => {
-    // Find the lowest ID in historical records to use as cursor
-    if (historicalRecords.length === 0) return;
-    const minId = Math.min(...historicalRecords.map((r) => r.id));
-    loadPage(minId);
-  }, [historicalRecords, loadPage]);
+    if (minHistoricalId === undefined) return;
+    loadPage(minHistoricalId);
+  }, [minHistoricalId, loadPage]);
 
   // SSE callbacks
   const onRecord = useCallback((rec: RequestRecord) => {
+    if (rec.id > maxKnownId.current) maxKnownId.current = rec.id;
     setLiveRecords((prev) => [...prev, rec]);
     setNewIds((prev) => {
       const next = new Set(prev);
@@ -154,6 +165,11 @@ export default function App() {
     newIdTimers.current.set(rec.id, timer);
   }, []);
 
+  const onRecordUpdate = useCallback((rec: RequestRecord) => {
+    setLiveRecords((prev) => prev.map((r) => (r.id === rec.id ? rec : r)));
+    setHistoricalRecords((prev) => prev.map((r) => (r.id === rec.id ? rec : r)));
+  }, []);
+
   const onAuthExpired = useCallback(() => {
     setAuthState('login');
     setLoginError('Your session has expired. Please log in again.');
@@ -163,8 +179,10 @@ export default function App() {
     setSseStatus(status);
   }, []);
 
+  const getLastId = useCallback(() => maxKnownId.current, []);
+
   const sseEnabled = authState === 'authenticated' || authState === 'noauth';
-  const closeSSE = useSSE({ onRecord, onAuthExpired, onStatusChange, enabled: sseEnabled });
+  const closeSSE = useSSE({ onRecord, onRecordUpdate, onAuthExpired, onStatusChange, getLastId, enabled: sseEnabled });
 
   // Check auth on mount
   useEffect(() => {
@@ -198,6 +216,7 @@ export default function App() {
     setNewIds(new Set());
     setSseStatus('disconnected');
     setInitialLoaded(false);
+    setMinHistoricalId(undefined);
   };
 
   if (authState === 'checking') {

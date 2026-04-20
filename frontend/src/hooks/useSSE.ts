@@ -5,14 +5,16 @@ type SSEStatus = 'connecting' | 'connected' | 'disconnected';
 
 interface UseSSEOptions {
   onRecord: (rec: RequestRecord) => void;
+  onRecordUpdate: (rec: RequestRecord) => void;
   onAuthExpired: () => void;
   onStatusChange: (status: SSEStatus) => void;
+  getLastId: () => number;
   enabled: boolean;
 }
 
-export function useSSE({ onRecord, onAuthExpired, onStatusChange, enabled }: UseSSEOptions) {
+export function useSSE({ onRecord, onRecordUpdate, onAuthExpired, onStatusChange, getLastId, enabled }: UseSSEOptions) {
   const esRef = useRef<EventSource | null>(null);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const close = useCallback(() => {
     if (reconnectTimer.current) {
@@ -35,7 +37,9 @@ export function useSSE({ onRecord, onAuthExpired, onStatusChange, enabled }: Use
       close();
       onStatusChange('connecting');
 
-      const es = new EventSource('/api/events/stream');
+      const lastId = getLastId();
+      const url = lastId > 0 ? `/api/events/stream?after_id=${lastId}` : '/api/events/stream';
+      const es = new EventSource(url);
       esRef.current = es;
 
       es.addEventListener('connected', () => {
@@ -45,6 +49,11 @@ export function useSSE({ onRecord, onAuthExpired, onStatusChange, enabled }: Use
       es.addEventListener('request', (e) => {
         const rec: RequestRecord = JSON.parse(e.data);
         onRecord(rec);
+      });
+
+      es.addEventListener('request_update', (e) => {
+        const rec: RequestRecord = JSON.parse(e.data);
+        onRecordUpdate(rec);
       });
 
       es.addEventListener('auth_expired', () => {
@@ -64,7 +73,7 @@ export function useSSE({ onRecord, onAuthExpired, onStatusChange, enabled }: Use
 
     connect();
     return close;
-  }, [enabled, onRecord, onAuthExpired, onStatusChange, close]);
+  }, [enabled, onRecord, onRecordUpdate, onAuthExpired, onStatusChange, getLastId, close]);
 
   return close;
 }

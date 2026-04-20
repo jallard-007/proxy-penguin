@@ -88,7 +88,8 @@ func (s *Server) HandleRequests(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleStream streams live request records as SSE "request" events until
-// the client disconnects.
+// the client disconnects. If the client provides an "after_id" query parameter,
+// the server first sends all records since that ID as a delta before streaming live.
 func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -96,14 +97,44 @@ func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var afterID int64
+	if v := r.URL.Query().Get("after_id"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err == nil && id > 0 {
+			afterID = id
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	// Subscribe to live events.
+	// Subscribe to live events BEFORE querying the delta so we don't miss
+	// anything that arrives between the query and the subscription.
 	id, ch := s.broker.Subscribe()
 	defer s.broker.Unsubscribe(id)
+
+	// Send delta: all records since the client's last known ID.
+	if afterID > 0 {
+		delta, err := s.storage.QuerySince(afterID)
+		if err != nil {
+			log.Printf("failed to query delta: %v", err)
+		} else {
+			for _, rec := range delta {
+				data, err := json.Marshal(rec)
+				if err != nil {
+					continue
+				}
+				eventType := "request"
+				if !rec.Pending {
+					eventType = "request_update"
+				}
+				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
+			}
+			flusher.Flush()
+		}
+	}
 
 	// Send a connected event so the client knows the stream is ready.
 	fmt.Fprintf(w, "event: connected\ndata: {}\n\n")
@@ -117,15 +148,19 @@ func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 
 	for {
 		select {
-		case rec, ok := <-ch:
+		case evt, ok := <-ch:
 			if !ok {
 				return
 			}
-			data, err := json.Marshal(rec)
+			data, err := json.Marshal(evt.Record)
 			if err != nil {
 				continue
 			}
-			fmt.Fprintf(w, "event: request\ndata: %s\n\n", data)
+			eventType := "request"
+			if evt.Record.ID > 0 && !evt.Record.Pending {
+				eventType = "request_update"
+			}
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
 			flusher.Flush()
 		case <-heartbeat.C:
 			fmt.Fprintf(w, ": heartbeat\n\n")

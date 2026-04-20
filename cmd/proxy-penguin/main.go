@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jallard-007/proxy-pengiun/api"
+	"github.com/jallard-007/proxy-pengiun/auth"
 	"github.com/jallard-007/proxy-pengiun/broker"
 	"github.com/jallard-007/proxy-pengiun/frontend"
 	"github.com/jallard-007/proxy-pengiun/httputils"
@@ -33,6 +34,7 @@ type Config struct {
 	DBPath        string            `json:"dbPath"`
 	Routes        map[string]string `json:"routes"`
 	DashboardHost string            `json:"dashboardHost"`
+	ApiPassword   string            `json:"apiPassword"`
 }
 
 func initMux(routes map[string]string, mux httputils.Router) error {
@@ -63,9 +65,11 @@ func main() {
 
 	b := broker.New()
 
+	authMgr := auth.NewManager(cfg.ApiPassword, store)
+
 	records := make(chan *model.RequestRecord, 1024)
 
-	apiSrv := api.NewServer(store, b)
+	apiSrv := api.NewServer(store, b, authMgr)
 
 	mux := http.NewServeMux()
 
@@ -90,6 +94,8 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	go authMgr.StartCleanup(ctx)
 
 	var wg sync.WaitGroup
 

@@ -37,12 +37,25 @@ func New(dbPath string) (*Storage, error) {
 		return nil, err
 	}
 
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS sessions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_hash TEXT NOT NULL UNIQUE,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	indexes := []string{
 		"CREATE INDEX IF NOT EXISTS idx_req_timestamp ON requests(timestamp)",
 		"CREATE INDEX IF NOT EXISTS idx_req_hostname ON requests(hostname)",
 		"CREATE INDEX IF NOT EXISTS idx_req_client_ip ON requests(client_ip)",
 		"CREATE INDEX IF NOT EXISTS idx_req_status ON requests(status)",
 		"CREATE INDEX IF NOT EXISTS idx_req_duration ON requests(duration_ms)",
+		"CREATE INDEX IF NOT EXISTS idx_sess_expires ON sessions(expires_at)",
 	}
 	for _, ddl := range indexes {
 		if _, err := db.Exec(ddl); err != nil {
@@ -74,6 +87,57 @@ func (s *Storage) Insert(rec *model.RequestRecord) error {
 	}
 	rec.ID = id
 	return nil
+}
+
+// SessionRecord represents a session loaded from the database.
+type SessionRecord struct {
+	SessionHash string
+	CreatedAt   time.Time
+	ExpiresAt   time.Time
+}
+
+// InsertSession persists a new session to the database.
+func (s *Storage) InsertSession(sessionHash string, createdAt, expiresAt time.Time) error {
+	_, err := s.db.Exec(
+		"INSERT INTO sessions (session_hash, created_at, expires_at) VALUES (?, ?, ?)",
+		sessionHash, createdAt.Unix(), expiresAt.Unix(),
+	)
+	return err
+}
+
+// DeleteSession removes a session by its hash.
+func (s *Storage) DeleteSession(sessionHash string) {
+	s.db.Exec("DELETE FROM sessions WHERE session_hash = ?", sessionHash)
+}
+
+// LoadSessions returns all non-expired sessions from the database.
+func (s *Storage) LoadSessions() ([]SessionRecord, error) {
+	rows, err := s.db.Query(
+		"SELECT session_hash, created_at, expires_at FROM sessions WHERE expires_at > ?",
+		time.Now().Unix(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []SessionRecord
+	for rows.Next() {
+		var r SessionRecord
+		var createdAt, expiresAt int64
+		if err := rows.Scan(&r.SessionHash, &createdAt, &expiresAt); err != nil {
+			return nil, err
+		}
+		r.CreatedAt = time.Unix(createdAt, 0)
+		r.ExpiresAt = time.Unix(expiresAt, 0)
+		sessions = append(sessions, r)
+	}
+	return sessions, rows.Err()
+}
+
+// CleanupExpiredSessions deletes all expired sessions from the database.
+func (s *Storage) CleanupExpiredSessions() {
+	s.db.Exec("DELETE FROM sessions WHERE expires_at <= ?", time.Now().Unix())
 }
 
 // Recent returns up to limit request records ordered chronologically (oldest first).

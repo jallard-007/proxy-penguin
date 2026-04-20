@@ -180,14 +180,90 @@
         }
 
         tr.new-row td { animation: flash 1s ease-out; }
+
+        #login-overlay {
+            position: fixed;
+            inset: 0;
+            background: var(--bg);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .login-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 40px;
+            width: 100%;
+            max-width: 360px;
+        }
+
+        .login-box h2 {
+            text-align: center;
+            margin-bottom: 24px;
+            font-size: 20px;
+        }
+
+        .login-box input {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 14px;
+            margin-bottom: 12px;
+            outline: none;
+        }
+
+        .login-box input:focus { border-color: var(--accent); }
+
+        .login-box button {
+            width: 100%;
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .login-box button:hover { opacity: 0.9; }
+        .login-box button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        #login-error {
+            color: var(--danger);
+            font-size: 13px;
+            margin-top: 12px;
+            text-align: center;
+            min-height: 20px;
+        }
     </style>
 </head>
 <body>
+    <div id="login-overlay">
+        <div class="login-box">
+            <h2>&#x1F427; Proxy Penguin</h2>
+            <form id="login-form">
+                <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required>
+                <button type="submit">Authenticate</button>
+                <p id="login-error"></p>
+            </form>
+        </div>
+    </div>
+
     <header>
         <h1>&#x1F427; Proxy Penguin</h1>
-        <div class="status">
-            <div class="status-dot" id="status-dot"></div>
-            <span id="status-text">Connecting...</span>
+        <div style="display:flex;align-items:center;gap:16px;">
+            <button id="btn-logout" style="display:none;background:var(--border);border:none;color:var(--text);padding:5px 12px;border-radius:6px;font-size:13px;cursor:pointer;">Logout</button>
+            <div class="status">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="status-text">Connecting...</span>
+            </div>
         </div>
     </header>
 
@@ -386,9 +462,20 @@
             }
         }
 
+        // Auth
+        const loginOverlay = document.getElementById('login-overlay');
+        const loginForm = document.getElementById('login-form');
+        const loginError = document.getElementById('login-error');
+        const loginPassword = document.getElementById('login-password');
+        const logoutBtn = document.getElementById('btn-logout');
+        let authRequired = false;
+        let currentES = null;
+
         // SSE connection
         function connect() {
+            if (currentES) currentES.close();
             const es = new EventSource('/api/events/stream');
+            currentES = es;
 
             es.addEventListener('init', (e) => {
                 records = JSON.parse(e.data) || [];
@@ -410,14 +497,102 @@
                 statusText.textContent = 'Connected';
             });
 
+            es.addEventListener('auth_expired', () => {
+                es.close();
+                currentES = null;
+                statusDot.className = 'status-dot disconnected';
+                statusText.textContent = 'Session expired';
+                logoutBtn.style.display = 'none';
+                showLogin();
+                loginError.textContent = 'Your session has expired. Please log in again.';
+            });
+
             es.addEventListener('error', () => {
+                es.close();
+                currentES = null;
                 statusDot.className = 'status-dot disconnected';
                 statusText.textContent = 'Reconnecting...';
-                setTimeout(connect, 2000);
+                if (authRequired) {
+                    fetch('/api/auth/check').then(r => {
+                        if (r.status === 401) {
+                            showLogin();
+                        } else {
+                            setTimeout(connect, 2000);
+                        }
+                    }).catch(() => setTimeout(connect, 2000));
+                } else {
+                    setTimeout(connect, 2000);
+                }
             });
         }
 
-        connect();
+        function showLogin() {
+            loginOverlay.style.display = 'flex';
+            loginError.textContent = '';
+            loginPassword.focus();
+        }
+
+        async function checkAuth() {
+            try {
+                const res = await fetch('/api/auth/check');
+                const data = await res.json();
+                if (!data.authRequired) {
+                    connect();
+                    return;
+                }
+                authRequired = true;
+                if (res.ok) {
+                    logoutBtn.style.display = '';
+                    connect();
+                } else {
+                    showLogin();
+                }
+            } catch {
+                connect();
+            }
+        }
+
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            loginError.textContent = '';
+            const btn = loginForm.querySelector('button');
+            btn.disabled = true;
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        password: loginPassword.value,
+                    }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    loginOverlay.style.display = 'none';
+                    loginPassword.value = '';
+                    logoutBtn.style.display = '';
+                    connect();
+                } else {
+                    loginError.textContent = data.error || 'Login failed.';
+                }
+            } catch {
+                loginError.textContent = 'Connection error.';
+            } finally {
+                btn.disabled = false;
+            }
+        });
+
+        logoutBtn.addEventListener('click', async () => {
+            if (currentES) { currentES.close(); currentES = null; }
+            try { await fetch('/api/auth/logout', {method: 'POST'}); } catch {}
+            logoutBtn.style.display = 'none';
+            records = [];
+            render();
+            statusDot.className = 'status-dot disconnected';
+            statusText.textContent = 'Disconnected';
+            showLogin();
+        });
+
+        checkAuth();
     })();
     </script>
 </body>

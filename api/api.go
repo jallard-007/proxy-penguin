@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
+	"github.com/jallard-007/proxy-pengiun/auth"
 	"github.com/jallard-007/proxy-pengiun/broker"
 	"github.com/jallard-007/proxy-pengiun/httputils"
 	"github.com/jallard-007/proxy-pengiun/storage"
@@ -17,19 +19,28 @@ import (
 type Server struct {
 	storage *storage.Storage
 	broker  *broker.Broker
+	auth    *auth.Manager
 }
 
 // NewServer constructs a Server wired to the given storage and broker.
-func NewServer(s *storage.Storage, b *broker.Broker) *Server {
+func NewServer(s *storage.Storage, b *broker.Broker, a *auth.Manager) *Server {
 	return &Server{
 		storage: s,
 		broker:  b,
+		auth:    a,
 	}
 }
 
 // RegisterRoutes registers the API endpoints on router, scoped under dashboardHost.
 func (s *Server) RegisterRoutes(dashboardHost string, router httputils.Router) {
-	router.HandleFunc(fmt.Sprintf("GET %s/api/events/stream", dashboardHost), s.HandleStream)
+	// Auth routes (unprotected).
+	router.HandleFunc(fmt.Sprintf("POST %s/api/auth/login", dashboardHost), s.auth.HandleLogin)
+	router.HandleFunc(fmt.Sprintf("POST %s/api/auth/logout", dashboardHost), s.auth.HandleLogout)
+	router.HandleFunc(fmt.Sprintf("GET %s/api/auth/check", dashboardHost), s.auth.HandleCheck)
+
+	// Protected routes.
+	router.Handle(fmt.Sprintf("GET %s/api/events/stream", dashboardHost),
+		s.auth.Middleware(http.HandlerFunc(s.HandleStream)))
 }
 
 // HandleStream sends an initial snapshot of recent records as an SSE "init"
@@ -69,6 +80,9 @@ func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 	id, ch := s.broker.Subscribe()
 	defer s.broker.Unsubscribe(id)
 
+	sessionCheck := time.NewTicker(time.Minute)
+	defer sessionCheck.Stop()
+
 	for {
 		select {
 		case rec, ok := <-ch:
@@ -81,6 +95,12 @@ func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 			}
 			fmt.Fprintf(w, "event: request\ndata: %s\n\n", data)
 			flusher.Flush()
+		case <-sessionCheck.C:
+			if !s.auth.ValidateSessionFromRequest(r) {
+				fmt.Fprintf(w, "event: auth_expired\ndata: {}\n\n")
+				flusher.Flush()
+				return
+			}
 		case <-r.Context().Done():
 			return
 		}

@@ -63,10 +63,6 @@ function durationColor(ms: number): string {
   return 'text-red-400';
 }
 
-function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
 interface Column {
   field: keyof RequestRecord;
   label: string;
@@ -147,18 +143,18 @@ export default function RequestTable({
               >
                 <td className="px-3 py-1.5 whitespace-nowrap font-mono text-[11px] text-gray-300">{formatTime(r.timestamp)}</td>
                 <td className="px-3 py-1.5 whitespace-nowrap font-mono text-[11px] text-cyan-400 truncate" title={r.hostname}>
-                  {esc(r.hostname)}
+                  {r.hostname}
                 </td>
                 <td className="px-3 py-1.5 whitespace-nowrap font-mono text-[11px] text-gray-300 truncate" title={r.path}>
-                  {esc(r.path)}
+                  {r.path}
                 </td>
-                <td className="px-3 py-1.5 whitespace-nowrap font-mono text-[11px] text-purple-400">{esc(r.clientIp)}</td>
+                <td className="px-3 py-1.5 whitespace-nowrap font-mono text-[11px] text-purple-400">{r.clientIp}</td>
                 <td className="px-3 py-1.5 whitespace-nowrap"><StatusBadge status={r.status} /></td>
                 <td className={`px-3 py-1.5 whitespace-nowrap font-mono text-[11px] ${durationColor(r.durationMs)}`}>
                   {formatDuration(r.durationMs)}
                 </td>
                 <td className="px-3 py-1.5 whitespace-nowrap font-mono text-[11px] text-muted truncate" title={r.userAgent}>
-                  {esc(r.userAgent)}
+                  {r.userAgent}
                 </td>
               </tr>
             );

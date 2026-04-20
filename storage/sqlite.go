@@ -275,7 +275,6 @@ func (s *Storage) QueryPage(beforeID int64, limit int, filters RequestFilters) (
 	if len(filters.ExcludedHostnames) > 0 {
 		placeholders := make([]string, 0, len(filters.ExcludedHostnames))
 		for _, h := range filters.ExcludedHostnames {
-			h = strings.TrimSpace(h)
 			if h == "" {
 				continue
 			}

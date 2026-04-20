@@ -25,6 +25,13 @@ type Server struct {
 	auth    *auth.Manager
 }
 
+var datePresetMinutes = map[string]int64{
+	"15m": 15,
+	"1h":  60,
+	"24h": 24 * 60,
+	"7d":  7 * 24 * 60,
+}
+
 // NewServer constructs a Server wired to the given storage and broker.
 func NewServer(s *storage.Storage, b *broker.Broker, a *auth.Manager) *Server {
 	return &Server{
@@ -175,15 +182,9 @@ func parseRequestFilters(q url.Values) (storage.RequestFilters, error) {
 
 	datePreset := firstQueryValue(q, "date_preset", "datePreset")
 	if datePreset != "" {
-		minutesByPreset := map[string]int64{
-			"15m": 15,
-			"1h":  60,
-			"24h": 24 * 60,
-			"7d":  7 * 24 * 60,
-		}
-		minutes, ok := minutesByPreset[datePreset]
+		minutes, ok := datePresetMinutes[datePreset]
 		if !ok {
-			return storage.RequestFilters{}, fmt.Errorf("invalid date_preset")
+			return storage.RequestFilters{}, fmt.Errorf("invalid date_preset: %s (must be one of: 15m, 1h, 24h, 7d)", datePreset)
 		}
 		filters.DateFromMs = time.Now().Add(-time.Duration(minutes) * time.Minute).UnixMilli()
 		return filters, nil
@@ -194,7 +195,7 @@ func parseRequestFilters(q url.Values) (storage.RequestFilters, error) {
 	if dateFrom != "" {
 		filters.DateFromMs, err = parseUnixOrTimeMillis(dateFrom)
 		if err != nil {
-			return storage.RequestFilters{}, fmt.Errorf("invalid date_from")
+			return storage.RequestFilters{}, fmt.Errorf("invalid date_from: %w", err)
 		}
 	}
 
@@ -202,7 +203,7 @@ func parseRequestFilters(q url.Values) (storage.RequestFilters, error) {
 	if dateTo != "" {
 		filters.DateToMs, err = parseUnixOrTimeMillis(dateTo)
 		if err != nil {
-			return storage.RequestFilters{}, fmt.Errorf("invalid date_to")
+			return storage.RequestFilters{}, fmt.Errorf("invalid date_to: %w", err)
 		}
 	}
 

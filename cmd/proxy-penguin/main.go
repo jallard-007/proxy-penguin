@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -83,7 +84,31 @@ func main() {
 	})
 
 	apiSrv.RegisterRoutes(cfg.DashboardHost, router)
-	router.Handle(fmt.Sprintf("GET %s/", cfg.DashboardHost), http.FileServerFS(frontend.FS))
+
+	// Serve the built frontend, falling back to index.html for SPA routing.
+	fileServer := http.FileServerFS(frontend.FS)
+	router.Handle(fmt.Sprintf("GET %s/", cfg.DashboardHost), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Try to serve the file directly first.
+		// Strip the dashboard host prefix to get the file path.
+		path := r.URL.Path
+		if cfg.DashboardHost != "" {
+			path = strings.TrimPrefix(path, "/")
+			path = strings.TrimPrefix(path, cfg.DashboardHost)
+		}
+		path = strings.TrimPrefix(path, "/")
+
+		if path != "" {
+			if f, err := frontend.FS.Open(path); err == nil {
+				f.Close()
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		// Fallback: serve index.html for SPA routing.
+		r.URL.Path = "/"
+		fileServer.ServeHTTP(w, r)
+	}))
 
 	err = initMux(cfg.Routes, router)
 	if err != nil {

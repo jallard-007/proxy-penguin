@@ -126,15 +126,11 @@ func (m *Manager) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// subtle.ConstantTimeCompare returns 0 immediately if the lens are not the same, so make them the same
-	// if the lens are different
-	cmpA, cmpB := req.Password, m.password
-	if len(cmpA) != len(cmpB) {
-		cmpA = "a"
-		cmpB = "b"
-	}
+	// Hash both values so they are always the same length for constant-time comparison.
+	reqHash := sha256.Sum256([]byte(req.Password))
+	pwHash := sha256.Sum256([]byte(m.password))
 
-	if subtle.ConstantTimeCompare([]byte(req.Password), []byte(m.password)) != 1 {
+	if subtle.ConstantTimeCompare(reqHash[:], pwHash[:]) != 1 {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid password."})
 		return
 	}
@@ -253,6 +249,7 @@ func (m *Manager) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !m.ValidateSessionFromRequest(r) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated."})
+			return
 		}
 		next.ServeHTTP(w, r)
 	})

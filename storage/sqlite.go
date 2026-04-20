@@ -30,7 +30,8 @@ func New(dbPath string) (*Storage, error) {
 			path TEXT NOT NULL,
 			client_ip TEXT NOT NULL,
 			status INTEGER NOT NULL,
-			duration_ms REAL NOT NULL
+			duration_ms REAL NOT NULL,
+			user_agent TEXT NOT NULL DEFAULT ''
 		)
 	`); err != nil {
 		db.Close()
@@ -168,4 +169,58 @@ func (s *Storage) Recent(limit int) ([]*model.RequestRecord, error) {
 	}
 
 	return records, rows.Err()
+}
+
+// QueryPage returns up to limit records with IDs less than beforeID (cursor-based pagination).
+// If beforeID is 0, it returns the most recent records. Records are returned newest-first.
+// The second return value indicates whether more records exist beyond this page.
+func (s *Storage) QueryPage(beforeID int64, limit int) ([]*model.RequestRecord, bool, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	// Fetch one extra to determine if there are more records.
+	fetchLimit := limit + 1
+
+	var rows *sql.Rows
+	var err error
+	if beforeID > 0 {
+		rows, err = s.db.Query(
+			"SELECT id, timestamp, hostname, path, client_ip, status, duration_ms, user_agent FROM requests WHERE id < ? ORDER BY id DESC LIMIT ?",
+			beforeID, fetchLimit,
+		)
+	} else {
+		rows, err = s.db.Query(
+			"SELECT id, timestamp, hostname, path, client_ip, status, duration_ms, user_agent FROM requests ORDER BY id DESC LIMIT ?",
+			fetchLimit,
+		)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+
+	records := make([]*model.RequestRecord, 0, limit)
+	for rows.Next() {
+		var r model.RequestRecord
+		var ts int64
+		if err := rows.Scan(&r.ID, &ts, &r.Hostname, &r.Path, &r.ClientIP, &r.Status, &r.DurationMs, &r.UserAgent); err != nil {
+			return nil, false, err
+		}
+		r.Timestamp = time.UnixMilli(ts)
+		records = append(records, &r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(records) > limit
+	if hasMore {
+		records = records[:limit]
+	}
+
+	return records, hasMore, nil
 }

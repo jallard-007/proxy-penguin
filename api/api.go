@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/jallard-007/proxy-pengiun/auth"
@@ -41,11 +42,53 @@ func (s *Server) RegisterRoutes(dashboardHost string, router httputils.Router) {
 	// Protected routes.
 	router.Handle(fmt.Sprintf("GET %s/api/events/stream", dashboardHost),
 		s.auth.Middleware(http.HandlerFunc(s.HandleStream)))
+	router.Handle(fmt.Sprintf("GET %s/api/requests", dashboardHost),
+		s.auth.Middleware(http.HandlerFunc(s.HandleRequests)))
 }
 
-// HandleStream sends an initial snapshot of recent records as an SSE "init"
-// event, then streams live request records as "request" events until the
-// client disconnects.
+// HandleRequests returns a paginated list of request records.
+// Query parameters:
+//   - before_id: cursor for pagination (return records with ID < this value)
+//   - limit: max records to return (default 50, max 200)
+func (s *Server) HandleRequests(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	var beforeID int64
+	if v := q.Get("before_id"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id < 0 {
+			http.Error(w, "invalid before_id", http.StatusBadRequest)
+			return
+		}
+		beforeID = id
+	}
+
+	limit := 50
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return
+		}
+		limit = n
+	}
+
+	records, hasMore, err := s.storage.QueryPage(beforeID, limit)
+	if err != nil {
+		log.Printf("failed to query records: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"records": records,
+		"hasMore": hasMore,
+	})
+}
+
+// HandleStream streams live request records as SSE "request" events until
+// the client disconnects.
 func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -58,27 +101,13 @@ func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	// Send initial snapshot
-	records, err := s.storage.Recent(500)
-	if err != nil {
-		log.Printf("failed to query recent records: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	data, err := json.Marshal(records)
-	if err != nil {
-		log.Printf("failed to marshal records: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	fmt.Fprintf(w, "event: init\ndata: %s\n\n", data)
-	flusher.Flush()
-
-	// Subscribe to live events
+	// Subscribe to live events.
 	id, ch := s.broker.Subscribe()
 	defer s.broker.Unsubscribe(id)
+
+	// Send a connected event so the client knows the stream is ready.
+	fmt.Fprintf(w, "event: connected\ndata: {}\n\n")
+	flusher.Flush()
 
 	sessionCheck := time.NewTicker(time.Minute)
 	defer sessionCheck.Stop()

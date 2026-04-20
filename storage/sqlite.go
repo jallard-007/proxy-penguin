@@ -280,9 +280,7 @@ func (s *Storage) QueryPage(beforeID int64, limit int, filters RequestFilters) (
 			placeholders = append(placeholders, "?")
 			args = append(args, h)
 		}
-		if len(placeholders) > 0 {
-			where = append(where, "hostname NOT IN ("+strings.Join(placeholders, ", ")+")")
-		}
+		where = append(where, "hostname NOT IN ("+strings.Join(placeholders, ", ")+")")
 	}
 	if filters.DateFromMs > 0 {
 		where = append(where, "timestamp >= ?")

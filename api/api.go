@@ -18,6 +18,8 @@ import (
 	"github.com/jallard-007/proxy-pengiun/storage"
 )
 
+const unixMillisThreshold = 1_000_000_000_000
+
 // Server is the API and dashboard HTTP server.
 type Server struct {
 	storage *storage.Storage
@@ -129,7 +131,7 @@ func parseUnixOrTimeMillis(v string) (int64, error) {
 		}
 		// Accept both unix seconds and unix milliseconds.
 		// 1e12 is safely above current unix seconds and in range for unix milliseconds.
-		if n < 1_000_000_000_000 {
+		if n < unixMillisThreshold {
 			return n * 1000, nil
 		}
 		return n, nil
@@ -169,14 +171,14 @@ func parseRequestFilters(q url.Values) (storage.RequestFilters, error) {
 		UserAgent: firstQueryValue(q, "user_agent", "userAgent"),
 	}
 
-	rawExcludedHostnames := make([]string, 0)
-	rawExcludedHostnames = append(rawExcludedHostnames, q["excluded_hostname"]...)
-	rawExcludedHostnames = append(rawExcludedHostnames, q["excludedHostnames"]...)
+	excludedList := make([]string, 0)
+	excludedList = append(excludedList, q["excluded_hostname"]...)
+	excludedList = append(excludedList, q["excludedHostnames"]...)
 	if csv := firstQueryValue(q, "excluded_hostnames"); csv != "" {
-		rawExcludedHostnames = append(rawExcludedHostnames, strings.Split(csv, ",")...)
+		excludedList = append(excludedList, strings.Split(csv, ",")...)
 	}
-	seen := make(map[string]struct{}, len(rawExcludedHostnames))
-	for _, h := range rawExcludedHostnames {
+	seen := make(map[string]struct{}, len(excludedList))
+	for _, h := range excludedList {
 		h = strings.TrimSpace(h)
 		if h == "" {
 			continue

@@ -104,6 +104,7 @@ func (s *Server) HandleRequests(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// firstQueryValue returns first non-empty trimmed value among provided query keys.
 func firstQueryValue(q url.Values, keys ...string) string {
 	for _, key := range keys {
 		if v := strings.TrimSpace(q.Get(key)); v != "" {
@@ -113,6 +114,9 @@ func firstQueryValue(q url.Values, keys ...string) string {
 	return ""
 }
 
+// parseUnixOrTimeMillis parses a timestamp value and returns unix milliseconds.
+// Supported formats: unix seconds, unix milliseconds, RFC3339, RFC3339Nano,
+// and datetime-local formats (YYYY-MM-DDTHH:MM[:SS]) in local server time.
 func parseUnixOrTimeMillis(v string) (int64, error) {
 	v = strings.TrimSpace(v)
 	if v == "" {
@@ -124,6 +128,7 @@ func parseUnixOrTimeMillis(v string) (int64, error) {
 			return 0, nil
 		}
 		// Accept both unix seconds and unix milliseconds.
+		// 1e12 is safely above current unix seconds and in range for unix milliseconds.
 		if n < 1_000_000_000_000 {
 			return n * 1000, nil
 		}
@@ -145,6 +150,16 @@ func parseUnixOrTimeMillis(v string) (int64, error) {
 	return 0, fmt.Errorf("invalid timestamp: %s", v)
 }
 
+// parseRequestFilters parses /api/requests filter query params.
+// It supports snake_case and camelCase aliases for selected params:
+// - client_ip|clientIp
+// - user_agent|userAgent
+// - date_from|dateFrom
+// - date_to|dateTo
+// - date_preset|datePreset
+// Excluded hostnames can be supplied as repeated excluded_hostname params,
+// repeated excludedHostnames params, or comma-separated excluded_hostnames.
+// If a valid date preset is provided, it overrides explicit date range values.
 func parseRequestFilters(q url.Values) (storage.RequestFilters, error) {
 	filters := storage.RequestFilters{
 		Hostname:  firstQueryValue(q, "hostname"),

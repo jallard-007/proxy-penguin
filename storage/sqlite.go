@@ -198,6 +198,7 @@ type RequestFilters struct {
 	DateToMs          int64
 }
 
+// likeEscaper escapes special LIKE pattern characters for SQLite queries.
 var likeEscaper = strings.NewReplacer(
 	`\`, `\\`,
 	`%`, `\%`,
@@ -276,9 +277,6 @@ func (s *Storage) QueryPage(beforeID int64, limit int, filters RequestFilters) (
 	if len(filters.ExcludedHostnames) > 0 {
 		placeholders := make([]string, 0, len(filters.ExcludedHostnames))
 		for _, h := range filters.ExcludedHostnames {
-			if h == "" {
-				continue
-			}
 			placeholders = append(placeholders, "?")
 			args = append(args, h)
 		}

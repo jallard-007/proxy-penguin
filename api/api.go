@@ -83,6 +83,9 @@ func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 	sessionCheck := time.NewTicker(time.Minute)
 	defer sessionCheck.Stop()
 
+	heartbeat := time.NewTicker(30 * time.Second)
+	defer heartbeat.Stop()
+
 	for {
 		select {
 		case rec, ok := <-ch:
@@ -94,6 +97,9 @@ func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			fmt.Fprintf(w, "event: request\ndata: %s\n\n", data)
+			flusher.Flush()
+		case <-heartbeat.C:
+			fmt.Fprintf(w, ": heartbeat\n\n")
 			flusher.Flush()
 		case <-sessionCheck.C:
 			if !s.auth.ValidateSessionFromRequest(r) {

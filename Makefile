@@ -3,7 +3,7 @@
 all: proxy-penguin
 
 frontend:
-	cd frontend && npm install && npx vite build
+	cd frontend && npx vite build
 
 proxy-penguin: frontend
 	go build ./cmd/proxy-penguin

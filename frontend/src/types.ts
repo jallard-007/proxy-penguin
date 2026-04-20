@@ -23,3 +23,27 @@ export interface SortState {
   field: SortField;
   dir: SortDir;
 }
+
+export interface Filters {
+  hostname: string;
+  path: string;
+  clientIp: string;
+  status: string;
+  userAgent: string;
+  excludedHostnames: string[];
+  dateFrom: string;
+  dateTo: string;
+  datePreset: string;
+}
+
+export const emptyFilters: Filters = {
+  hostname: '',
+  path: '',
+  clientIp: '',
+  status: '',
+  userAgent: '',
+  excludedHostnames: [],
+  dateFrom: '',
+  dateTo: '',
+  datePreset: '',
+};

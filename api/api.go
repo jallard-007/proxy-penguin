@@ -116,6 +116,9 @@ func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 	defer s.broker.Unsubscribe(id)
 
 	// Send delta: all records since the client's last known ID.
+	// Always use "request" event type because the client doesn't have these
+	// records yet (unlike live events, where the client may already hold
+	// the pending version and needs a "request_update").
 	if afterID > 0 {
 		delta, err := s.storage.QuerySince(afterID)
 		if err != nil {
@@ -126,11 +129,7 @@ func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					continue
 				}
-				eventType := "request"
-				if !rec.Pending {
-					eventType = "request_update"
-				}
-				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
+				fmt.Fprintf(w, "event: request\ndata: %s\n\n", data)
 			}
 			flusher.Flush()
 		}

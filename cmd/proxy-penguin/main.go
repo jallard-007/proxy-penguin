@@ -83,7 +83,12 @@ func main() {
 	})
 
 	apiSrv.RegisterRoutes(cfg.DashboardHost, router)
-	router.Handle(fmt.Sprintf("GET %s/", cfg.DashboardHost), http.FileServerFS(frontend.FS))
+	fileServer := http.FileServerFS(frontend.FS)
+	router.Handle(fmt.Sprintf("GET %s/", cfg.DashboardHost), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		fmt.Println("req", r.URL.Path)
+		fileServer.ServeHTTP(w, r)
+	}))
 
 	err = initMux(cfg.Routes, router)
 	if err != nil {

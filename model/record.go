@@ -1,7 +1,11 @@
 // Package model defines the shared data types used across proxy-penguin.
 package model
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 // RequestRecord represents a single proxied HTTP request captured by the proxy.
 type RequestRecord struct {
@@ -21,6 +25,15 @@ type RequestRecord struct {
 // For new (pending) records, IDReady is closed once the record ID has been
 // assigned by the storage layer, allowing the caller to read Record.ID safely.
 type RecordEvent struct {
-	Record  *RequestRecord
-	IDReady chan struct{} // nil for updates; closed after Insert sets Record.ID
+	UID    uuid.UUID
+	Type   RecordEventType
+	Record *RequestRecord
 }
+
+type RecordEventType int
+
+const (
+	RecordEventTypeNone RecordEventType = iota
+	RecordEventTypeRequestStart
+	RecordEventTypeRequestDone
+)

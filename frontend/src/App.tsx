@@ -1,11 +1,11 @@
-import { useState, useMemo } from 'react';
-import type { Filters, SortState } from './types';
+import { useState, useMemo, useCallback } from 'react';
+import type { Filters, SortState, RequestRecord } from './types';
 import { emptyFilters } from './types';
 import { applyFilters, sortRecords } from './utils/filter';
 import { useAuth } from './hooks/useAuth';
 import { useRecords } from './hooks/useRecords';
 import Toolbar from './components/Toolbar';
-import RequestTable from './components/RequestTable';
+import RequestTable, { COLUMNS } from './components/RequestTable';
 import LoginForm from './components/LoginForm';
 
 export default function App() {
@@ -19,6 +19,21 @@ export default function App() {
 
   const [sort, setSort] = useState<SortState>({ field: 'timestamp', dir: 'desc' });
   const [filters, setFilters] = useState<Filters>(emptyFilters);
+  const [visibleFields, setVisibleFields] = useState<Set<keyof RequestRecord>>(
+    () => new Set(COLUMNS.map((c) => c.field)),
+  );
+
+  const toggleColumn = useCallback((field: keyof RequestRecord) => {
+    setVisibleFields((prev) => {
+      const next = new Set(prev);
+      if (next.has(field)) {
+        if (next.size > 1) next.delete(field);
+      } else {
+        next.add(field);
+      }
+      return next;
+    });
+  }, []);
 
   const hostnames = useMemo(() => {
     const set = new Set<string>();
@@ -91,6 +106,9 @@ export default function App() {
         totalCount={allRecords.length}
         filteredCount={filteredRecords.length}
         hostnames={hostnames}
+        columns={COLUMNS}
+        visibleFields={visibleFields}
+        onToggleColumn={toggleColumn}
       />
 
       {/* Table */}
@@ -102,6 +120,7 @@ export default function App() {
         onLoadMore={handleLoadMore}
         hasMore={hasMore}
         loadingMore={loadingMore}
+        visibleFields={visibleFields}
       />
     </div>
   );

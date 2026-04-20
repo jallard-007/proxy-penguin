@@ -1,4 +1,12 @@
-/config.json
+# binaries and db files
 /proxy-penguin*
+/proxy-loadgen
+
+# sensitive config file
+/config.json
+
+# npm modules
 frontend/node_modules/
+
+# background process output
 /nohup.out

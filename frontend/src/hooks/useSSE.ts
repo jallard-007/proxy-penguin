@@ -14,7 +14,9 @@ interface UseSSEOptions {
 
 export function useSSE({ onRecord, onRecordUpdate, onAuthExpired, onStatusChange, getLastId, enabled }: UseSSEOptions) {
   const esRef = useRef<EventSource | null>(null);
+  const connIdRef = useRef<string | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const enabledRef = useRef(enabled);
 
   // Store callbacks in refs so the SSE connection doesn't cycle when they change
   const onRecordRef = useRef(onRecord);
@@ -27,6 +29,26 @@ export function useSSE({ onRecord, onRecordUpdate, onAuthExpired, onStatusChange
   onAuthExpiredRef.current = onAuthExpired;
   onStatusChangeRef.current = onStatusChange;
   getLastIdRef.current = getLastId;
+  enabledRef.current = enabled;
+
+  const notifyDisconnect = useCallback((connId: string | null) => {
+    if (!connId) {
+      return;
+    }
+
+    const url = `/api/events/disconnect?cid=${encodeURIComponent(connId)}`;
+
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(url, new Blob([], { type: 'application/json' }));
+      return;
+    }
+
+    void fetch(url, {
+      method: 'POST',
+      keepalive: true,
+      credentials: 'same-origin',
+    });
+  }, []);
 
   const close = useCallback(() => {
     if (reconnectTimer.current) {
@@ -37,20 +59,29 @@ export function useSSE({ onRecord, onRecordUpdate, onAuthExpired, onStatusChange
       esRef.current.close();
       esRef.current = null;
     }
-  }, []);
+    notifyDisconnect(connIdRef.current);
+    connIdRef.current = null;
+  }, [notifyDisconnect]);
 
   useEffect(() => {
-    if (!enabled) {
-      close();
-      return;
-    }
-
     const connect = () => {
-      close();
+      if (!enabledRef.current || document.visibilityState !== 'visible') {
+        return;
+      }
+      if (esRef.current) {
+        return;
+      }
+
       onStatusChangeRef.current('connecting');
 
       const lastId = getLastIdRef.current();
-      const url = lastId > 0 ? `/api/events/stream?after_id=${lastId}` : '/api/events/stream';
+      const connId = crypto.randomUUID();
+      connIdRef.current = connId;
+      const qs = new URLSearchParams({ cid: connId });
+      if (lastId > 0) {
+        qs.set('after_id', String(lastId));
+      }
+      const url = `/api/events/stream?${qs.toString()}`;
       const es = new EventSource(url);
       esRef.current = es;
 
@@ -71,6 +102,8 @@ export function useSSE({ onRecord, onRecordUpdate, onAuthExpired, onStatusChange
       es.addEventListener('auth_expired', () => {
         es.close();
         esRef.current = null;
+        notifyDisconnect(connIdRef.current);
+        connIdRef.current = null;
         onStatusChangeRef.current('disconnected');
         onAuthExpiredRef.current();
       });
@@ -78,14 +111,48 @@ export function useSSE({ onRecord, onRecordUpdate, onAuthExpired, onStatusChange
       es.addEventListener('error', () => {
         es.close();
         esRef.current = null;
+        notifyDisconnect(connIdRef.current);
+        connIdRef.current = null;
         onStatusChangeRef.current('disconnected');
-        reconnectTimer.current = setTimeout(connect, 2000);
+        if (enabledRef.current && document.visibilityState === 'visible') {
+          reconnectTimer.current = setTimeout(connect, 2000);
+        }
       });
     };
 
-    connect();
-    return close;
-  }, [enabled, close]);
+    if (!enabled) {
+      close();
+      return;
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        close();
+        return;
+      }
+
+      if (document.visibilityState === 'visible') {
+        connect();
+      }
+    };
+
+    const handlePageHide = () => {
+      close();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+
+    if (document.visibilityState === 'visible') {
+      connect();
+    }
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+      close();
+    };
+  }, [enabled, close, notifyDisconnect]);
 
   return close;
 }

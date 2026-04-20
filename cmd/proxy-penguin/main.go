@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -21,20 +20,15 @@ import (
 	"github.com/jallard-007/proxy-pengiun/api"
 	"github.com/jallard-007/proxy-pengiun/auth"
 	"github.com/jallard-007/proxy-pengiun/broker"
+	"github.com/jallard-007/proxy-pengiun/event"
 	"github.com/jallard-007/proxy-pengiun/frontend"
 	"github.com/jallard-007/proxy-pengiun/httputils"
 	"github.com/jallard-007/proxy-pengiun/model"
-	"github.com/jallard-007/proxy-pengiun/proxy"
 	"github.com/jallard-007/proxy-pengiun/storage"
 )
 
-// Config holds the top-level application configuration loaded from config.json.
-type Config struct {
-	Addr          string            `json:"addr"`
-	DBPath        string            `json:"dbPath"`
-	Routes        map[string]string `json:"routes"`
-	DashboardHost string            `json:"dashboardHost"`
-	ApiPassword   string            `json:"apiPassword"`
+func main() {
+	os.Exit(realMain())
 }
 
 func initMux(routes map[string]string, mux httputils.Router) error {
@@ -54,26 +48,35 @@ func initMux(routes map[string]string, mux httputils.Router) error {
 	return nil
 }
 
-func main() {
-	cfg := loadConfig("config.json")
+func realMain() int {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
+	cfg, err := loadConfig("config.json")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
+	// initialize DB
 	store, err := storage.New(cfg.DBPath)
 	if err != nil {
-		log.Fatalf("storage init: %v", err)
+		fmt.Fprintln(os.Stderr, "storage init:", err)
+		return 1
 	}
 	defer store.Close()
 
+	// init event broker
 	b := broker.New()
 
+	// authentication manager
 	authMgr := auth.NewManager(cfg.ApiPassword, store)
-
-	records := make(chan *model.RecordEvent, 1024)
 
 	apiSrv := api.NewServer(store, b, authMgr)
 
 	mux := http.NewServeMux()
 
-	var handler http.Handler = mux
+	var httpHandler http.Handler = mux
 
 	var router httputils.Router = mux
 	oldR := router
@@ -87,13 +90,13 @@ func main() {
 
 	err = initMux(cfg.Routes, router)
 	if err != nil {
-		log.Fatalf("registering routes: %v", err)
+		fmt.Fprintln(os.Stderr, "registering routes:", err)
+		return 1
 	}
 
-	handler = proxy.Wrap(records, handler)
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	// wrap all requests with the proxy handler
+	events := make(chan model.RecordEvent, 1024)
+	httpHandler = event.EmitEvents(events, httpHandler)
 
 	go authMgr.StartCleanup(ctx)
 
@@ -101,34 +104,12 @@ func main() {
 
 	// Record processor: store + publish each request event.
 	wg.Go(func() {
-		for evt := range records {
-			rec := evt.Record
-			if rec.ID > 0 {
-				// Completion update for an existing record.
-				if err := store.Update(rec); err != nil {
-					log.Printf("storage update: %v", err)
-					continue
-				}
-			} else {
-				// New (pending) record.
-				if err := store.Insert(rec); err != nil {
-					log.Printf("storage insert: %v", err)
-					if evt.IDReady != nil {
-						close(evt.IDReady)
-					}
-					continue
-				}
-				if evt.IDReady != nil {
-					close(evt.IDReady)
-				}
-			}
-			b.Publish(evt)
-		}
+		event.Handle(events, store, b)
 	})
 
 	srvr := &http.Server{
 		Addr:    cfg.Addr,
-		Handler: handler,
+		Handler: httpHandler,
 		BaseContext: func(l net.Listener) context.Context {
 			return ctx
 		},
@@ -150,28 +131,10 @@ func main() {
 
 	srvr.Shutdown(shutdownCtx)
 
-	close(records)
+	close(events)
 
 	wg.Wait()
 
 	log.Println("Done")
-}
-
-func loadConfig(path string) Config {
-	cfg := Config{
-		Addr:   ":8080",
-		DBPath: "proxy-penguin.db",
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		log.Printf("Warning: could not read %s: %v (using defaults)", path, err)
-		return cfg
-	}
-
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		log.Fatalf("invalid config %s: %v", path, err)
-	}
-
-	return cfg
+	return 0
 }

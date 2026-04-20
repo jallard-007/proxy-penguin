@@ -3,11 +3,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/jallard-007/proxy-pengiun/auth"
@@ -21,6 +23,9 @@ type Server struct {
 	storage *storage.Storage
 	broker  *broker.Broker
 	auth    *auth.Manager
+
+	mu      sync.Mutex
+	streams map[string]context.CancelFunc
 }
 
 // NewServer constructs a Server wired to the given storage and broker.
@@ -29,6 +34,7 @@ func NewServer(s *storage.Storage, b *broker.Broker, a *auth.Manager) *Server {
 		storage: s,
 		broker:  b,
 		auth:    a,
+		streams: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -42,8 +48,42 @@ func (s *Server) RegisterRoutes(dashboardHost string, router httputils.Router) {
 	// Protected routes.
 	router.Handle(fmt.Sprintf("GET %s/api/events/stream", dashboardHost),
 		s.auth.Middleware(http.HandlerFunc(s.HandleStream)))
+	router.Handle(fmt.Sprintf("POST %s/api/events/disconnect", dashboardHost),
+		s.auth.Middleware(http.HandlerFunc(s.HandleDisconnect)))
 	router.Handle(fmt.Sprintf("GET %s/api/requests", dashboardHost),
 		s.auth.Middleware(http.HandlerFunc(s.HandleRequests)))
+}
+
+func (s *Server) registerStream(connID string, cancel context.CancelFunc) {
+	s.mu.Lock()
+	s.streams[connID] = cancel
+	s.mu.Unlock()
+}
+
+func (s *Server) unregisterStream(connID string) {
+	s.mu.Lock()
+	delete(s.streams, connID)
+	s.mu.Unlock()
+}
+
+// HandleDisconnect closes an active SSE stream identified by query parameter "cid".
+// This is intended for page teardown signals (sendBeacon/keepalive fetch) so
+// the server can cancel streams immediately on tab close.
+func (s *Server) HandleDisconnect(w http.ResponseWriter, r *http.Request) {
+	connID := r.URL.Query().Get("cid")
+	if connID == "" {
+		http.Error(w, "missing cid", http.StatusBadRequest)
+		return
+	}
+
+	s.mu.Lock()
+	cancel, ok := s.streams[connID]
+	s.mu.Unlock()
+	if ok {
+		cancel()
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // HandleRequests returns a paginated list of request records.
@@ -87,6 +127,8 @@ func (s *Server) HandleRequests(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format
+
 // HandleStream streams live request records as SSE "request" events until
 // the client disconnects. If the client provides an "after_id" query parameter,
 // the server first sends all records since that ID as a delta before streaming live.
@@ -97,8 +139,18 @@ func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	query := r.URL.Query()
+	connID := query.Get("cid")
+	if connID != "" {
+		s.registerStream(connID, cancel)
+		defer s.unregisterStream(connID)
+	}
+
 	var afterID int64
-	if v := r.URL.Query().Get("after_id"); v != "" {
+	if v := query.Get("after_id"); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
 		if err == nil && id > 0 {
 			afterID = id
@@ -129,7 +181,7 @@ func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					continue
 				}
-				fmt.Fprintf(w, "event: request\ndata: %s\n\n", data)
+				fmt.Fprintf(w, "event: request\nid: %d\ndata: %s\n\n", rec.ID, data)
 			}
 			flusher.Flush()
 		}
@@ -159,7 +211,7 @@ func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 			if evt.Record.ID > 0 && !evt.Record.Pending {
 				eventType = "request_update"
 			}
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
+			fmt.Fprintf(w, "event: %s\nid: %d\ndata: %s\n\n", eventType, evt.Record.ID, data)
 			flusher.Flush()
 		case <-heartbeat.C:
 			fmt.Fprintf(w, ": heartbeat\n\n")
@@ -170,7 +222,7 @@ func (s *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 				return
 			}
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		}
 	}

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import type { Filters } from '../types';
+import type { Filters, RequestRecord } from '../types';
 import { emptyFilters } from '../types';
 
 const DATE_PRESETS = [
@@ -9,22 +9,35 @@ const DATE_PRESETS = [
   { label: '7d', minutes: 10080 },
 ];
 
+interface ColumnDef {
+  field: keyof RequestRecord;
+  label: string;
+}
+
 interface ToolbarProps {
   filters: Filters;
   onFiltersChange: (f: Filters) => void;
   totalCount: number;
   filteredCount: number;
   hostnames: string[];
+  columns: ColumnDef[];
+  visibleFields: Set<keyof RequestRecord>;
+  onToggleColumn: (field: keyof RequestRecord) => void;
 }
 
-export default function Toolbar({ filters, onFiltersChange, totalCount, filteredCount, hostnames }: ToolbarProps) {
+export default function Toolbar({ filters, onFiltersChange, totalCount, filteredCount, hostnames, columns, visibleFields, onToggleColumn }: ToolbarProps) {
   const [showExclude, setShowExclude] = useState(false);
+  const [showColumnMenu, setShowColumnMenu] = useState(false);
   const excludeRef = useRef<HTMLDivElement>(null);
+  const columnMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (excludeRef.current && !excludeRef.current.contains(e.target as Node)) {
         setShowExclude(false);
+      }
+      if (columnMenuRef.current && !columnMenuRef.current.contains(e.target as Node)) {
+        setShowColumnMenu(false);
       }
     };
     document.addEventListener('click', handler);
@@ -166,6 +179,32 @@ export default function Toolbar({ filters, onFiltersChange, totalCount, filtered
           Clear
         </button>
       )}
+
+      {/* Column visibility dropdown */}
+      <div className="relative" ref={columnMenuRef}>
+        <button
+          onClick={(e) => { e.stopPropagation(); setShowColumnMenu(!showColumnMenu); }}
+          className="text-xs px-2.5 py-1 rounded-md cursor-pointer border bg-gray-950 border-border-subtle text-muted hover:text-gray-100"
+          title="Show/hide columns"
+        >
+          Columns &#9662;
+        </button>
+        {showColumnMenu && (
+          <div className="absolute top-full right-0 mt-1 bg-surface border border-border-subtle rounded-md shadow-lg z-50 min-w-36 py-1">
+            {columns.map((col) => (
+              <label key={col.field} className="flex items-center gap-2 px-3 py-1 text-xs cursor-pointer hover:bg-surface-hover">
+                <input
+                  type="checkbox"
+                  checked={visibleFields.has(col.field)}
+                  onChange={() => onToggleColumn(col.field)}
+                  className="accent-accent"
+                />
+                <span>{col.label}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="flex-1" />
 

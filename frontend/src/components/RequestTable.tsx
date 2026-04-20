@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useRef, useEffect } from 'react';
 import StatusBadge from './StatusBadge';
 import type { RequestRecord, SortState } from '../types';
 import { formatTime, formatDuration, durationColor, formatQueryParams } from '../utils/format';
@@ -12,6 +12,7 @@ interface RequestTableProps {
   onLoadMore: () => void;
   hasMore: boolean;
   loadingMore: boolean;
+  visibleFields: Set<keyof RequestRecord>;
 }
 
 function QueryParamsCell({ raw }: { raw: string }) {
@@ -31,13 +32,13 @@ function QueryParamsCell({ raw }: { raw: string }) {
   );
 }
 
-interface Column {
+export interface Column {
   field: keyof RequestRecord;
   label: string;
   defaultWidth: number;
 }
 
-const COLUMNS: Column[] = [
+export const COLUMNS: Column[] = [
   { field: 'timestamp', label: 'Time', defaultWidth: 210 },
   { field: 'hostname', label: 'Hostname', defaultWidth: 160 },
   { field: 'path', label: 'Path', defaultWidth: 240 },
@@ -56,14 +57,10 @@ export default function RequestTable({
   onLoadMore,
   hasMore,
   loadingMore,
+  visibleFields,
 }: RequestTableProps) {
   const sentinelRef = useRef<HTMLTableRowElement>(null);
   const { columnWidths, handleResizeStart, consumeResize } = useColumnResize(COLUMNS.map((c) => c.defaultWidth));
-  const [visibleFields, setVisibleFields] = useState<Set<keyof RequestRecord>>(
-    () => new Set(COLUMNS.map((c) => c.field)),
-  );
-  const [showColumnMenu, setShowColumnMenu] = useState(false);
-  const columnMenuRef = useRef<HTMLDivElement>(null);
 
   const handleSort = (field: keyof RequestRecord) => {
     if (consumeResize()) return;
@@ -93,60 +90,11 @@ export default function RequestTable({
     return () => observer.disconnect();
   }, []);
 
-  // Close column menu on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (columnMenuRef.current && !columnMenuRef.current.contains(e.target as Node)) {
-        setShowColumnMenu(false);
-      }
-    };
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
-  }, []);
-
-  const toggleColumn = (field: keyof RequestRecord) => {
-    setVisibleFields((prev) => {
-      const next = new Set(prev);
-      if (next.has(field)) {
-        if (next.size > 1) next.delete(field);
-      } else {
-        next.add(field);
-      }
-      return next;
-    });
-  };
-
   const visibleColumns = COLUMNS.filter((c) => visibleFields.has(c.field));
   const visibleColumnWidths = COLUMNS.map((_, i) => columnWidths[i]).filter((_, i) => visibleFields.has(COLUMNS[i].field));
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      {/* Column visibility dropdown */}
-      <div className="relative flex justify-end px-2 pt-1 pb-1 z-20 shrink-0" ref={columnMenuRef}>
-        <button
-          onClick={(e) => { e.stopPropagation(); setShowColumnMenu(!showColumnMenu); }}
-          className="text-[10px] px-2 py-0.5 rounded border border-border-subtle bg-surface text-muted hover:text-gray-100 cursor-pointer"
-          title="Show/hide columns"
-        >
-          Columns &#9662;
-        </button>
-        {showColumnMenu && (
-          <div className="absolute top-full right-0 mt-1 bg-surface border border-border-subtle rounded-md shadow-lg min-w-36 py-1">
-            {COLUMNS.map((col) => (
-              <label key={col.field} className="flex items-center gap-2 px-3 py-1 text-xs cursor-pointer hover:bg-surface-hover">
-                <input
-                  type="checkbox"
-                  checked={visibleFields.has(col.field)}
-                  onChange={() => toggleColumn(col.field)}
-                  className="accent-accent"
-                />
-                <span>{col.label}</span>
-              </label>
-            ))}
-          </div>
-        )}
-      </div>
-
       <div className="flex-1 overflow-auto relative">
         <table className="text-xs border-collapse" style={{ tableLayout: 'fixed', width: visibleColumnWidths.reduce((a, b) => a + b, 0) }}>
           <colgroup>

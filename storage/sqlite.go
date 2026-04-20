@@ -171,6 +171,9 @@ func (s *Storage) Recent(limit int) ([]*model.RequestRecord, error) {
 	return records, rows.Err()
 }
 
+// maxPageSize is the maximum number of records returned in a single page.
+const maxPageSize = 200
+
 // QueryPage returns up to limit records with IDs less than beforeID (cursor-based pagination).
 // If beforeID is 0, it returns the most recent records. Records are returned newest-first.
 // The second return value indicates whether more records exist beyond this page.
@@ -178,8 +181,8 @@ func (s *Storage) QueryPage(beforeID int64, limit int) ([]*model.RequestRecord, 
 	if limit <= 0 {
 		limit = 50
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > maxPageSize {
+		limit = maxPageSize
 	}
 
 	// Fetch one extra to determine if there are more records.

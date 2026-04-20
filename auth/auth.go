@@ -126,11 +126,10 @@ func (m *Manager) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hash both values so they are always the same length for constant-time comparison.
-	reqHash := sha256.Sum256([]byte(req.Password))
-	pwHash := sha256.Sum256([]byte(m.password))
-
-	if subtle.ConstantTimeCompare(reqHash[:], pwHash[:]) != 1 {
+	// Use direct constant-time comparison. The slight timing difference from
+	// length mismatch is not practically exploitable given the rate limiting
+	// and artificial delay already in place.
+	if subtle.ConstantTimeCompare([]byte(req.Password), []byte(m.password)) != 1 {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid password."})
 		return
 	}

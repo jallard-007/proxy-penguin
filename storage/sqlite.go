@@ -3,6 +3,7 @@ package storage
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 
 	"github.com/jallard-007/proxy-pengiun/model"
@@ -185,10 +186,56 @@ func (s *Storage) Recent(limit int) ([]*model.RequestRecord, error) {
 // maxPageSize is the maximum number of records returned in a single page.
 const maxPageSize = 200
 
-// QueryPage returns up to limit records with IDs less than beforeID (cursor-based pagination).
+// RequestFilters defines optional filters for request queries.
+type RequestFilters struct {
+	Hostname          string
+	Path              string
+	ClientIP          string
+	Status            string
+	UserAgent         string
+	ExcludedHostnames []string
+	DateFromMs        int64
+	DateToMs          int64
+}
+
+func escapeLike(v string) string {
+	replacer := strings.NewReplacer(
+		`\`, `\\`,
+		`%`, `\%`,
+		`_`, `\_`,
+	)
+	return replacer.Replace(v)
+}
+
+func containsLikePattern(v string) string {
+	return "%" + escapeLike(v) + "%"
+}
+
+func statusLikePattern(v string) string {
+	v = strings.TrimSpace(strings.ToLower(v))
+	if v == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range v {
+		switch r {
+		case 'x':
+			b.WriteByte('_')
+		case '%', '_', '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// QueryPage returns up to limit records with IDs less than beforeID (cursor-based pagination),
+// with optional filters applied.
 // If beforeID is 0, it returns the most recent records. Records are returned newest-first.
 // The second return value indicates whether more records exist beyond this page.
-func (s *Storage) QueryPage(beforeID int64, limit int) ([]*model.RequestRecord, bool, error) {
+func (s *Storage) QueryPage(beforeID int64, limit int, filters RequestFilters) ([]*model.RequestRecord, bool, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -199,19 +246,63 @@ func (s *Storage) QueryPage(beforeID int64, limit int) ([]*model.RequestRecord, 
 	// Fetch one extra to determine if there are more records.
 	fetchLimit := limit + 1
 
-	var rows *sql.Rows
-	var err error
+	where := make([]string, 0, 8)
+	args := make([]any, 0, 12)
 	if beforeID > 0 {
-		rows, err = s.db.Query(
-			"SELECT id, timestamp, hostname, path, query_params, client_ip, status, duration_ms, user_agent, pending FROM requests WHERE id < ? ORDER BY id DESC LIMIT ?",
-			beforeID, fetchLimit,
-		)
-	} else {
-		rows, err = s.db.Query(
-			"SELECT id, timestamp, hostname, path, query_params, client_ip, status, duration_ms, user_agent, pending FROM requests ORDER BY id DESC LIMIT ?",
-			fetchLimit,
-		)
+		where = append(where, "id < ?")
+		args = append(args, beforeID)
 	}
+	if v := strings.TrimSpace(filters.Hostname); v != "" {
+		where = append(where, "LOWER(hostname) LIKE ? ESCAPE '\\'")
+		args = append(args, containsLikePattern(strings.ToLower(v)))
+	}
+	if v := strings.TrimSpace(filters.Path); v != "" {
+		where = append(where, "LOWER(path) LIKE ? ESCAPE '\\'")
+		args = append(args, containsLikePattern(strings.ToLower(v)))
+	}
+	if v := strings.TrimSpace(filters.ClientIP); v != "" {
+		where = append(where, "client_ip LIKE ? ESCAPE '\\'")
+		args = append(args, containsLikePattern(v))
+	}
+	if v := statusLikePattern(filters.Status); v != "" {
+		where = append(where, "CAST(status AS TEXT) LIKE ? ESCAPE '\\'")
+		args = append(args, v)
+	}
+	if v := strings.TrimSpace(filters.UserAgent); v != "" {
+		where = append(where, "LOWER(user_agent) LIKE ? ESCAPE '\\'")
+		args = append(args, containsLikePattern(strings.ToLower(v)))
+	}
+	if len(filters.ExcludedHostnames) > 0 {
+		placeholders := make([]string, 0, len(filters.ExcludedHostnames))
+		for _, h := range filters.ExcludedHostnames {
+			h = strings.TrimSpace(h)
+			if h == "" {
+				continue
+			}
+			placeholders = append(placeholders, "?")
+			args = append(args, h)
+		}
+		if len(placeholders) > 0 {
+			where = append(where, "hostname NOT IN ("+strings.Join(placeholders, ", ")+")")
+		}
+	}
+	if filters.DateFromMs > 0 {
+		where = append(where, "timestamp >= ?")
+		args = append(args, filters.DateFromMs)
+	}
+	if filters.DateToMs > 0 {
+		where = append(where, "timestamp <= ?")
+		args = append(args, filters.DateToMs)
+	}
+
+	query := "SELECT id, timestamp, hostname, path, query_params, client_ip, status, duration_ms, user_agent, pending FROM requests"
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY id DESC LIMIT ?"
+	args = append(args, fetchLimit)
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, false, err
 	}

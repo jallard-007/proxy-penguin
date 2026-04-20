@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jallard-007/proxy-pengiun/auth"
@@ -50,6 +52,15 @@ func (s *Server) RegisterRoutes(dashboardHost string, router httputils.Router) {
 // Query parameters:
 //   - before_id: cursor for pagination (return records with ID < this value)
 //   - limit: max records to return (default 50, max 200)
+//   - hostname: case-insensitive hostname substring
+//   - path: case-insensitive path substring
+//   - client_ip|clientIp: client IP substring
+//   - status: status pattern (supports "x" wildcard, e.g. "2xx")
+//   - user_agent|userAgent: case-insensitive User-Agent substring
+//   - excluded_hostname (repeatable) or excluded_hostnames (comma-separated)
+//   - date_preset: one of 15m, 1h, 24h, 7d
+//   - date_from|dateFrom: start timestamp (RFC3339, datetime-local, or unix sec/ms)
+//   - date_to|dateTo: end timestamp (RFC3339, datetime-local, or unix sec/ms)
 func (s *Server) HandleRequests(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
@@ -73,7 +84,13 @@ func (s *Server) HandleRequests(w http.ResponseWriter, r *http.Request) {
 		limit = n
 	}
 
-	records, hasMore, err := s.storage.QueryPage(beforeID, limit)
+	filters, err := parseRequestFilters(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	records, hasMore, err := s.storage.QueryPage(beforeID, limit, filters)
 	if err != nil {
 		log.Printf("failed to query records: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -85,6 +102,115 @@ func (s *Server) HandleRequests(w http.ResponseWriter, r *http.Request) {
 		"records": records,
 		"hasMore": hasMore,
 	})
+}
+
+func firstQueryValue(q url.Values, keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(q.Get(key)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func parseUnixOrTimeMillis(v string) (int64, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, nil
+	}
+
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		if n <= 0 {
+			return 0, nil
+		}
+		// Accept both unix seconds and unix milliseconds.
+		if n < 1_000_000_000_000 {
+			return n * 1000, nil
+		}
+		return n, nil
+	}
+
+	if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+		return t.UnixMilli(), nil
+	}
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t.UnixMilli(), nil
+	}
+	if t, err := time.ParseInLocation("2006-01-02T15:04", v, time.Local); err == nil {
+		return t.UnixMilli(), nil
+	}
+	if t, err := time.ParseInLocation("2006-01-02T15:04:05", v, time.Local); err == nil {
+		return t.UnixMilli(), nil
+	}
+	return 0, fmt.Errorf("invalid timestamp: %s", v)
+}
+
+func parseRequestFilters(q url.Values) (storage.RequestFilters, error) {
+	filters := storage.RequestFilters{
+		Hostname:  firstQueryValue(q, "hostname"),
+		Path:      firstQueryValue(q, "path"),
+		ClientIP:  firstQueryValue(q, "client_ip", "clientIp"),
+		Status:    firstQueryValue(q, "status"),
+		UserAgent: firstQueryValue(q, "user_agent", "userAgent"),
+	}
+
+	excluded := make([]string, 0)
+	excluded = append(excluded, q["excluded_hostname"]...)
+	excluded = append(excluded, q["excludedHostnames"]...)
+	if csv := firstQueryValue(q, "excluded_hostnames"); csv != "" {
+		excluded = append(excluded, strings.Split(csv, ",")...)
+	}
+	seen := make(map[string]struct{}, len(excluded))
+	for _, h := range excluded {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		filters.ExcludedHostnames = append(filters.ExcludedHostnames, h)
+	}
+
+	datePreset := firstQueryValue(q, "date_preset", "datePreset")
+	if datePreset != "" {
+		minutesByPreset := map[string]int64{
+			"15m": 15,
+			"1h":  60,
+			"24h": 24 * 60,
+			"7d":  7 * 24 * 60,
+		}
+		minutes, ok := minutesByPreset[datePreset]
+		if !ok {
+			return storage.RequestFilters{}, fmt.Errorf("invalid date_preset")
+		}
+		filters.DateFromMs = time.Now().Add(-time.Duration(minutes) * time.Minute).UnixMilli()
+		return filters, nil
+	}
+
+	var err error
+	dateFrom := firstQueryValue(q, "date_from", "dateFrom")
+	if dateFrom != "" {
+		filters.DateFromMs, err = parseUnixOrTimeMillis(dateFrom)
+		if err != nil {
+			return storage.RequestFilters{}, fmt.Errorf("invalid date_from")
+		}
+	}
+
+	dateTo := firstQueryValue(q, "date_to", "dateTo")
+	if dateTo != "" {
+		filters.DateToMs, err = parseUnixOrTimeMillis(dateTo)
+		if err != nil {
+			return storage.RequestFilters{}, fmt.Errorf("invalid date_to")
+		}
+	}
+
+	if filters.DateFromMs > 0 && filters.DateToMs > 0 && filters.DateFromMs > filters.DateToMs {
+		return storage.RequestFilters{}, fmt.Errorf("date_from must be <= date_to")
+	}
+
+	return filters, nil
 }
 
 // HandleStream streams live request records as SSE "request" events until

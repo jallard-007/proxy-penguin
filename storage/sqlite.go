@@ -198,13 +198,14 @@ type RequestFilters struct {
 	DateToMs          int64
 }
 
+var likeEscaper = strings.NewReplacer(
+	`\`, `\\`,
+	`%`, `\%`,
+	`_`, `\_`,
+)
+
 func escapeLike(v string) string {
-	replacer := strings.NewReplacer(
-		`\`, `\\`,
-		`%`, `\%`,
-		`_`, `\_`,
-	)
-	return replacer.Replace(v)
+	return likeEscaper.Replace(v)
 }
 
 func containsLikePattern(v string) string {

@@ -25,13 +25,6 @@ type Server struct {
 	auth    *auth.Manager
 }
 
-var datePresetMinutes = map[string]int64{
-	"15m": 15,
-	"1h":  60,
-	"24h": 24 * 60,
-	"7d":  7 * 24 * 60,
-}
-
 // NewServer constructs a Server wired to the given storage and broker.
 func NewServer(s *storage.Storage, b *broker.Broker, a *auth.Manager) *Server {
 	return &Server{
@@ -161,14 +154,14 @@ func parseRequestFilters(q url.Values) (storage.RequestFilters, error) {
 		UserAgent: firstQueryValue(q, "user_agent", "userAgent"),
 	}
 
-	excluded := make([]string, 0)
-	excluded = append(excluded, q["excluded_hostname"]...)
-	excluded = append(excluded, q["excludedHostnames"]...)
+	rawExcludedHostnames := make([]string, 0)
+	rawExcludedHostnames = append(rawExcludedHostnames, q["excluded_hostname"]...)
+	rawExcludedHostnames = append(rawExcludedHostnames, q["excludedHostnames"]...)
 	if csv := firstQueryValue(q, "excluded_hostnames"); csv != "" {
-		excluded = append(excluded, strings.Split(csv, ",")...)
+		rawExcludedHostnames = append(rawExcludedHostnames, strings.Split(csv, ",")...)
 	}
-	seen := make(map[string]struct{}, len(excluded))
-	for _, h := range excluded {
+	seen := make(map[string]struct{}, len(rawExcludedHostnames))
+	for _, h := range rawExcludedHostnames {
 		h = strings.TrimSpace(h)
 		if h == "" {
 			continue
@@ -182,8 +175,17 @@ func parseRequestFilters(q url.Values) (storage.RequestFilters, error) {
 
 	datePreset := firstQueryValue(q, "date_preset", "datePreset")
 	if datePreset != "" {
-		minutes, ok := datePresetMinutes[datePreset]
-		if !ok {
+		var minutes int64
+		switch datePreset {
+		case "15m":
+			minutes = 15
+		case "1h":
+			minutes = 60
+		case "24h":
+			minutes = 24 * 60
+		case "7d":
+			minutes = 7 * 24 * 60
+		default:
 			return storage.RequestFilters{}, fmt.Errorf("invalid date_preset: %s (must be one of: 15m, 1h, 24h, 7d)", datePreset)
 		}
 		filters.DateFromMs = time.Now().Add(-time.Duration(minutes) * time.Minute).UnixMilli()

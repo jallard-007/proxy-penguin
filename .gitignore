@@ -1,7 +1,9 @@
 # binaries and db files
+/pp
 /proxy-penguin*
 /proxy-loadgen
-/pp-data
+/prod
+/dev
 
 # sensitive config file
 /config.*

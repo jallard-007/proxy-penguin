@@ -129,7 +129,7 @@ func realMain() int {
 		// emit incoming events to events chan
 		httpHandler = event.EmitEvents(&counter, &missed, events, httpHandler)
 		// log events to logger for debugging purposes
-		httpHandler = httputils.LogEvents(httpHandler)
+		// httpHandler = httputils.LogEvents(httpHandler)
 
 		ctx, cancel := context.WithCancel(ctx)
 

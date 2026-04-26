@@ -9,8 +9,8 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/jallard-007/proxy-pengiun/backend/event"
-	"github.com/jallard-007/proxy-pengiun/backend/model"
+	"github.com/jallard-007/proxy-penguin/backend/event"
+	"github.com/jallard-007/proxy-penguin/backend/model"
 )
 
 func newBenchStorage(b *testing.B) *event.Storage {

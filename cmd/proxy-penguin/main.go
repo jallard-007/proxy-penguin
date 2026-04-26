@@ -19,12 +19,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jallard-007/proxy-pengiun/backend/api"
-	"github.com/jallard-007/proxy-pengiun/backend/auth"
-	"github.com/jallard-007/proxy-pengiun/backend/event"
-	"github.com/jallard-007/proxy-pengiun/backend/httputils"
-	"github.com/jallard-007/proxy-pengiun/backend/model"
-	"github.com/jallard-007/proxy-pengiun/frontend"
+	"github.com/jallard-007/proxy-penguin/backend/api"
+	"github.com/jallard-007/proxy-penguin/backend/auth"
+	"github.com/jallard-007/proxy-penguin/backend/event"
+	"github.com/jallard-007/proxy-penguin/backend/httputils"
+	"github.com/jallard-007/proxy-penguin/backend/model"
+	"github.com/jallard-007/proxy-penguin/frontend"
 
 	"github.com/spf13/cobra"
 )

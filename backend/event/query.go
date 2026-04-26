@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/jallard-007/proxy-pengiun/backend/model"
+	"github.com/jallard-007/proxy-penguin/backend/model"
 )
 
 // QueryPage returns up to limit records with IDs less than beforeID (cursor-based pagination).

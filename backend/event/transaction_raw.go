@@ -8,7 +8,7 @@ import (
 
 	"github.com/mattn/go-sqlite3"
 
-	"github.com/jallard-007/proxy-pengiun/backend/model"
+	"github.com/jallard-007/proxy-penguin/backend/model"
 )
 
 const colsPerRow = 9

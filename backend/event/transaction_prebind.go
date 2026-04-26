@@ -34,7 +34,7 @@ import (
 
 	sqlite3 "github.com/mattn/go-sqlite3"
 
-	"github.com/jallard-007/proxy-pengiun/backend/model"
+	"github.com/jallard-007/proxy-penguin/backend/model"
 )
 
 // eface mirrors the two-word memory layout of any (empty interface).

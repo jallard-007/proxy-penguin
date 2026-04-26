@@ -1,4 +1,4 @@
-module github.com/jallard-007/proxy-pengiun
+module github.com/jallard-007/proxy-penguin
 
 go 1.26.2
 

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/jallard-007/proxy-pengiun/backend/event"
+	"github.com/jallard-007/proxy-penguin/backend/event"
 )
 
 const heartbeatFrequency = 30 * time.Second
@@ -69,7 +69,6 @@ func (s *Server) HandleRequestsStream(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("client disconnected")
 			return
 		case b, ok := <-c.ch:
 			if !ok {
@@ -140,7 +139,6 @@ func (s *Server) RunSSE(ctx context.Context, ePool *event.EventPool, evtsChan <-
 		case c := <-s.unregister:
 			_, ok := s.clients[c]
 			if ok {
-				log.Println("unregistered client")
 				delete(s.clients, c)
 				close(c.ch)
 			}

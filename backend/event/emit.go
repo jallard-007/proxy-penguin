@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jallard-007/proxy-pengiun/backend/model"
+	"github.com/jallard-007/proxy-penguin/backend/model"
 )
 
 // EmitEvents returns an http.Handler that records each request.

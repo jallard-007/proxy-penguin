@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"sync/atomic"
 
-	"github.com/jallard-007/proxy-pengiun/backend/auth"
-	"github.com/jallard-007/proxy-pengiun/backend/event"
-	"github.com/jallard-007/proxy-pengiun/backend/httputils"
+	"github.com/jallard-007/proxy-penguin/backend/auth"
+	"github.com/jallard-007/proxy-penguin/backend/event"
+	"github.com/jallard-007/proxy-penguin/backend/httputils"
 )
 
 type Config struct {

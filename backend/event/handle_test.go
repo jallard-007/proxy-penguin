@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jallard-007/proxy-pengiun/backend/event"
-	"github.com/jallard-007/proxy-pengiun/backend/model"
+	"github.com/jallard-007/proxy-penguin/backend/event"
+	"github.com/jallard-007/proxy-penguin/backend/model"
 )
 
 // --------------------------------------------------------------------------
